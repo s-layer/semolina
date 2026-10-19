@@ -62,9 +62,7 @@ class _FakeConnectorCursor:
         if self._table is None:
             return None
         # The connector reports a type *name* here, not a pyarrow type.
-        return [
-            (f.name, str(f.type), None, None, None, None, True) for f in self._table.schema
-        ]
+        return [(f.name, str(f.type), None, None, None, None, True) for f in self._table.schema]
 
     def _take(self, n: int | None) -> Any:
         end = self._table.num_rows if n is None else min(self._pos + n, self._table.num_rows)
@@ -106,6 +104,7 @@ class _FakeConnectorConnection:
         self.respond = respond
         self.executed: list[tuple[str, Any]] = []
         self.autocommit = True
+        self.closed = False
 
     def cursor(self) -> _FakeConnectorCursor:
         return _FakeConnectorCursor(self)
@@ -117,7 +116,7 @@ class _FakeConnectorConnection:
         pass
 
     def close(self) -> None:
-        pass
+        self.closed = True
 
 
 _SALES = pa.table({"revenue": pa.array([3000, 2800], pa.int64()), "country": ["US", "CA"]})
@@ -190,6 +189,26 @@ class TestResolution:
             assert isinstance(engine.dialect, DatabricksDialect)
         finally:
             engine.dispose()
+
+    def test_dispose_closes_the_pooled_connector_connections(
+        self, connector: list[_FakeConnectorConnection]
+    ) -> None:
+        """
+        ``dispose()`` tears the pool down through poolhouse's ``close_pool``.
+
+        A pool over a non-ADBC backend has no ``_adbc_source``, so a check on that attribute
+        alone sent it to ``QueuePool.close()``, which does not exist.
+        """
+        from semolina.config import create_engine
+
+        engine = create_engine(_config())
+        with engine.execute(Sales.query().metrics(Sales.revenue)) as cursor:
+            cursor.fetchall()
+
+        engine.dispose()
+
+        assert len(connector) == 1
+        assert connector[0].closed
 
     def test_toml_type_databricks_python(
         self, connector: list[_FakeConnectorConnection], tmp_path: Path
@@ -350,7 +369,10 @@ async def test_async_engine_runs_the_same_statement(
     try:
         assert isinstance(engine.dialect, DatabricksDialect)
         query = (
-            Sales.query().metrics(Sales.revenue).dimensions(Sales.country).where(Sales.country == "US")
+            Sales.query()
+            .metrics(Sales.revenue)
+            .dimensions(Sales.country)
+            .where(Sales.country == "US")
         )
         async with await engine.aexecute(query) as cursor:
             rows = await cursor.fetchall_rows()

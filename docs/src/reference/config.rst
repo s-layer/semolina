@@ -55,8 +55,8 @@ Environment variables
 ~~~~~~~~~~~~~~~~~~~~~
 
 A field the section leaves out is read from the backend's prefixed environment
-variable: ``SNOWFLAKE_`` for Snowflake, ``DATABRICKS_`` for Databricks, ``DUCKDB_``
-for DuckDB, followed by the field name in upper case. A committed file can therefore
+variable: ``SNOWFLAKE_`` for Snowflake, ``DATABRICKS_`` for Databricks,
+``DATABRICKS_PYTHON_`` for ``type = "databricks-python"``, ``DUCKDB_`` for DuckDB, followed by the field name in upper case. A committed file can therefore
 omit its secret, as the example above does for ``password`` and ``token``. A value
 in the section wins over the environment. One field breaks the pattern: ``schema``
 is read from an unprefixed ``SCHEMA`` variable on Snowflake and Databricks, so set
@@ -95,7 +95,8 @@ Common fields
 These fields are accepted by all connection types:
 
 ``type`` *string, required*
-   Backend identifier. One of ``"snowflake"``, ``"databricks"``, or ``"duckdb"``.
+   Backend identifier. One of ``"snowflake"``, ``"databricks"``,
+   ``"databricks-python"``, or ``"duckdb"``.
 
 ``pool_size`` *integer, default 5 (DuckDB in-memory: 1)*
    Number of connections to keep in the pool. A file-backed DuckDB database
@@ -261,6 +262,17 @@ These fields are accepted by all connection types:
 
       ``client_secret`` *string*
          OAuth M2M service principal client secret.
+
+      **Python connector** (``type = "databricks-python"``)
+
+      Builds an adbc-poolhouse ``DatabricksPythonConfig``, which connects through
+      ``databricks-sql-connector`` instead of the ADBC driver. It takes ``host``,
+      ``http_path``, ``token``, ``auth_type``, ``client_id``, ``client_secret``,
+      ``catalog`` and ``schema`` as above, but no ``uri``, and one more field:
+
+      ``use_kernel`` *boolean, default true*
+         Connect over the Statement Execution path rather than Thrift. Lakehouse//RT
+         requires it. See :ref:`howto-backends-databricks-rt`.
 
    .. tab-item:: DuckDB
       :sync: duckdb
