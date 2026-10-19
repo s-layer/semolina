@@ -7,10 +7,10 @@ with semolina so tests call ``Model.query().execute()`` against a real
 ``semantic_view()`` execution -- aggregation, grouping, ordering, limiting,
 and filtering all run for real.
 
-The semantic views are (re)created on every new physical connection via a
-SQLAlchemy ``connect`` event. ADBC poolhouse creates independent DuckDB
-instances per physical connection (``source.adbc_clone``), so each new
-connection must build its own tables and views.
+The tables and semantic views are created once, by ``once=True`` SQLAlchemy
+``connect`` listeners that run on the pool's first physical connection. Every
+pooled connection is an ``adbc_clone`` of one source and opens the same
+in-memory database, so later connections see what the first one committed.
 """
 
 from collections.abc import Iterator
@@ -22,7 +22,7 @@ from fixtures.mock_data import customers_data, orders_data, products_data
 import semolina
 
 # ---------------------------------------------------------------------------
-# Semantic-view setup helpers (run on each new physical connection)
+# Semantic-view setup helpers (run once, on the pool's first physical connection)
 # ---------------------------------------------------------------------------
 
 
@@ -203,8 +203,8 @@ def _make_pool(*setups: Any) -> Iterator[Any]:
 
     ``create_engine`` builds the DuckDB Engine (and already wires the
     ``semantic_views`` extension load on the pool ``connect`` event). Each
-    ``setups`` listener is attached to the owned pool so it also runs on every
-    new physical connection, then the engine is registered as ``"default"``.
+    ``setups`` listener is attached to the owned pool with ``once=True`` so it runs
+    on the first physical connection, then the engine is registered as ``"default"``.
     Yields the owned pool; unregisters and disposes the engine on teardown.
     """
     from adbc_poolhouse import DuckDBConfig
@@ -214,7 +214,7 @@ def _make_pool(*setups: Any) -> Iterator[Any]:
 
     engine = create_engine(DuckDBConfig(database=":memory:", pool_size=1))
     for setup in setups:
-        event.listen(engine._pool, "connect", setup)
+        event.listen(engine._pool, "connect", setup, once=True)
 
     semolina.register("default", engine)
     yield engine._pool
@@ -248,8 +248,8 @@ def jaffle_pool() -> Iterator[Any]:
     """
     In-memory DuckDB pool with all three jaffle-shop semantic views.
 
-    Sets up ``orders``, ``customers``, and ``products`` on each new physical
-    connection so tests can query across multiple views.
+    Sets up ``orders``, ``customers``, and ``products`` once, in the shared
+    in-memory database, so tests can query across multiple views.
     """
     pytest.importorskip("adbc_driver_duckdb")
     yield from _make_pool(_setup_orders, _setup_customers, _setup_products)

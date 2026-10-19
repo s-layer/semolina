@@ -43,9 +43,9 @@ def _setup_doctest_data(dbapi_conn: Any, _connection_record: Any) -> None:
     """
     Create sales_data table and sales_view semantic view for doctests.
 
-    Registered as a SQLAlchemy pool ``connect`` event listener. Fires
-    once per physical ADBC connection creation (each ADBC clone is an
-    independent in-memory DuckDB instance).
+    Registered as a ``once=True`` SQLAlchemy pool ``connect`` listener, so it
+    seeds on the pool's first physical connection only. Every ADBC clone opens
+    the same in-memory database, so later connections see the committed data.
     """
     cur = dbapi_conn.cursor()
     cur.execute("""
@@ -114,7 +114,7 @@ def doctest_setup(doctest_namespace: dict[str, object]) -> Generator[None, None,
     from semolina.filters import Predicate
 
     engine = create_engine(DuckDBConfig(database=":memory:", pool_size=1))
-    event.listen(engine._pool, "connect", _setup_doctest_data)
+    event.listen(engine._pool, "connect", _setup_doctest_data, once=True)
 
     register("default", engine)
 

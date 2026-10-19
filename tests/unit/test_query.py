@@ -96,7 +96,7 @@ def _create_duckdb_engine(
         cur.close()
         dbapi_conn.commit()
 
-    event.listen(engine._pool, "connect", _setup_data)
+    event.listen(engine._pool, "connect", _setup_data, once=True)
     return engine
 
 
@@ -226,7 +226,7 @@ class TestSelectingDimensions:
             cur.close()
             dbapi_conn.commit()
 
-        event.listen(engine._pool, "connect", _setup)
+        event.listen(engine._pool, "connect", _setup, once=True)
         try:
             rows = engine.execute(build()).fetchall()
         finally:

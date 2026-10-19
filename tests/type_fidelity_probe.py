@@ -158,11 +158,12 @@ class TypeFidelityView(SemanticView, view="type_fidelity_view"):
 
 def setup_probe_view(dbapi_conn: Any, _connection_record: Any) -> None:
     """
-    Create the probe table, seed it, and create the semantic view on each new connection.
+    Create the probe table, seed it, and create the semantic view.
 
-    Everything happens in this ``connect`` listener rather than after the pool is built:
-    adbc-poolhouse clones an independent in-memory DuckDB per physical connection
-    (``source.adbc_clone``), so data inserted later would vanish on the next checkout.
+    Registered as a ``once=True`` ``connect`` listener, so it runs on the pool's first
+    physical connection, after ``create_engine``'s own listener has loaded the extension.
+    Every pooled connection is an ``adbc_clone`` of one source and opens the same
+    in-memory database, so later connections see the committed data.
 
     Args:
         dbapi_conn: The freshly opened ADBC DBAPI connection.
@@ -183,12 +184,11 @@ def make_probe_engine() -> Engine:
 
     ``create_engine`` attaches the ``_load_semantic_views`` connect listener, which installs
     the community extension on first use; :func:`setup_probe_view` is attached to the same
-    pool afterwards so the extension is loaded before the view DDL runs. ``pool_size=1`` is
-    the mitigation for the per-connection-clone trap described in :func:`setup_probe_view`.
+    pool afterwards so the extension is loaded before the view DDL runs.
 
     Returns:
-        A DuckDB :class:`~semolina.engines.base.Engine` whose every physical connection
-        carries ``type_fidelity_view``. The caller owns it and must call ``dispose()``.
+        A DuckDB :class:`~semolina.engines.base.Engine` whose in-memory database carries
+        ``type_fidelity_view``. The caller owns it and must call ``dispose()``.
     """
     from adbc_poolhouse import DuckDBConfig
     from sqlalchemy import event
@@ -196,7 +196,7 @@ def make_probe_engine() -> Engine:
     from semolina.config import create_engine
 
     engine = create_engine(DuckDBConfig(database=":memory:", pool_size=1))
-    event.listen(engine._pool, "connect", setup_probe_view)
+    event.listen(engine._pool, "connect", setup_probe_view, once=True)
     return engine
 
 
