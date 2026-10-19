@@ -20,7 +20,7 @@ Run all three before committing.
 | Command | What it covers | Also enforced in CI? |
 |---------|----------------|----------------------|
 | `prek run --all-files` | ruff lint + format, basedpyright strict (and standard over the jaffle-shop example), shellcheck, uv lockfile, blacken-docs, JSON/TOML/YAML syntax | Partly — CI runs ruff check, ruff format and basedpyright (both passes) as their own jobs. Nothing in CI runs shellcheck, `uv lock --check`, blacken-docs or the whitespace hooks, so those are local-only and a hook you skip is not caught later |
-| `just test` | unit + doctest + cassette-replay suite, then the jaffle-shop workspace member | Yes, across Python 3.11-3.14, plus coverage |
+| `just test` | unit + doctest + cassette-replay suite, then the jaffle-shop workspace member | Yes, across Python 3.11-3.15, plus coverage |
 | `just docs-build` | Sphinx in strict mode (`-W`, plus `nitpicky = True` in `conf.py`) | Yes, on every push and PR |
 
 `just test` starts with `uv sync --locked --dev --extra all`, and that step is what makes
