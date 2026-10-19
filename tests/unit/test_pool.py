@@ -3,6 +3,7 @@ Tests for the engine's DuckDB pool: extension loading, and connections coming ba
 
 Test classes:
 - TestExtensionLoading: INSTALL + LOAD via connect event
+- TestInMemorySharedDatabase: pooled :memory: connections share one database
 - TestExecuteWithPool: end-to-end execute() via pool registry
 - TestExecuteErrorPathReleasesConnection: a failed execute still returns its connection
 - TestEngineDispose: dispose() closes the pool
@@ -67,6 +68,43 @@ class TestExtensionLoading:
                 cur.close()
         finally:
             close_pool(pool)
+
+
+# ---------------------------------------------------------------------------
+# TestInMemorySharedDatabase: pooled :memory: connections share one database
+# ---------------------------------------------------------------------------
+
+
+class TestInMemorySharedDatabase:
+    """Every pooled ``:memory:`` connection opens the database the pool's source holds."""
+
+    def test_new_connection_sees_committed_data_and_seed_runs_once(self, duckdb_pool: Any):
+        """
+        A second physical connection sees a row the first committed.
+
+        ``duckdb_pool`` holds one connection, so checking out a second while the first
+        is held opens an overflow connection. If connections had separate databases the
+        table would be missing; if the seed listener ran on every connection, its
+        ``DELETE`` would wipe the extra row and the count would be back to 3.
+        """
+        first = duckdb_pool.connect()
+        try:
+            cur = first.cursor()
+            cur.execute("INSERT INTO sales_data VALUES (4, 10, 1, 'FR', 'East', 1)")
+            cur.close()
+            first.commit()
+
+            second = duckdb_pool.connect()
+            try:
+                assert second.dbapi_connection is not first.dbapi_connection
+                cur = second.cursor()
+                cur.execute("SELECT count(*) FROM sales_data")
+                assert cur.fetchone() == (4,)
+                cur.close()
+            finally:
+                second.close()
+        finally:
+            first.close()
 
 
 # ---------------------------------------------------------------------------

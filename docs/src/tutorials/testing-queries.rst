@@ -125,11 +125,10 @@ The fixture has three jobs: create an in-memory DuckDB engine, build the table
 and the semantic view inside it, and register the engine as ``"default"`` for
 the duration of one test.
 
-The middle job needs a hook, because a DuckDB database at ``":memory:"``
-belongs to a single physical connection. There is nothing to set up "before
-the tests" that a later connection would see. Instead you attach a listener
-that runs on each new connection, which is what SQLAlchemy's ``connect`` event
-gives you.
+The middle job runs once per test, on a connection checked out from the
+engine. Every connection in the engine's pool opens the same ``":memory:"``
+database, so a table one connection creates is there for the connection that
+runs your query.
 
 Create ``conftest.py``:
 
@@ -138,15 +137,12 @@ Create ``conftest.py``:
 
    import pytest
    from adbc_poolhouse import DuckDBConfig
-   from sqlalchemy import event
 
    from semolina import create_engine
 
 
-   def seed(dbapi_conn, _record):
-       cur = dbapi_conn.cursor()
-       cur.execute("INSTALL semantic_views FROM community")
-       cur.execute("LOAD semantic_views")
+   def seed(conn):
+       cur = conn.cursor()
        cur.execute("""
            CREATE TABLE sales_data (
                revenue INTEGER, cost INTEGER,
@@ -172,23 +168,25 @@ Create ``conftest.py``:
            )
        """)
        cur.close()
-       dbapi_conn.commit()
+       conn.commit()
 
 
    @pytest.fixture
    def sales_engine():
-       config = DuckDBConfig(database=":memory:", pool_size=1)
+       config = DuckDBConfig(database=":memory:")
        with create_engine(config, register=True) as engine:
-           event.listen(engine._pool, "connect", seed)
+           with engine.connect() as conn:
+               seed(conn)
            yield engine
 
 Three details in there are load-bearing.
 
-``pool_size=1``, because each pooled connection to ``":memory:"`` would be its
-own separate database. One connection means one database means one set of
-seeded rows.
+``seed`` runs once, inside the ``with`` block. ``create_engine`` has already
+loaded the ``semantic_views`` extension on that connection, and the database
+lives as long as the engine's pool, so each test gets a fresh database with the
+rows in it.
 
-The ``dbapi_conn.commit()`` at the end of ``seed``. ADBC connections open with
+The ``conn.commit()`` at the end of ``seed``. ADBC connections open with
 ``autocommit=False``, and the ``semantic_views`` extension resolves the view on
 a separate read connection that only sees committed state. Without the commit,
 the view is invisible to the query that needs it.
@@ -197,17 +195,6 @@ The ``with`` block around the ``yield``. ``register=True`` registers the engine
 as ``"default"`` while the test runs, and leaving the block on teardown removes
 that name and disposes the pool, so one test's engine cannot leak into the next
 test.
-
-.. note:: ``engine._pool`` is private
-
-   Attaching the listener needs the underlying SQLAlchemy pool, and
-   :py:class:`Engine <semolina.engines.base.Engine>` has no public accessor for it
-   today. Nothing else gives you a per-connection hook, so a test suite reaching
-   into ``engine._pool`` is the pragmatic choice, but it is outside the public API:
-   pin your Semolina version if you depend on it. Never do it in application code:
-   leaving the ``with`` block closes the pool for you, and
-   :py:meth:`engine.dispose() <semolina.engines.base.Engine.dispose>` closes an
-   engine you hold outside one.
 
 3. Write the tests
 ------------------
@@ -342,5 +329,4 @@ See also
       :link: howto-connection-pools
       :link-type: ref
 
-      What ``create_engine`` builds, and why an in-memory database gets a pool of
-      one connection.
+      What ``create_engine`` builds, and how big its pool is.

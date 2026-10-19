@@ -104,11 +104,14 @@ def sales_query() -> Query:
 
 def _setup_sales_data(dbapi_conn: Any, _connection_record: Any) -> None:
     """
-    Create sales_data table and sales_view semantic view on each new connection.
+    Create the sales_data table and sales_view semantic view.
 
-    ADBC poolhouse creates independent DuckDB instances per physical
-    connection (``source.adbc_clone``), so tables and semantic views must
-    be set up on every new physical connection via a ``connect`` event.
+    Every pooled connection is an ``adbc_clone`` of one source connection and
+    opens the same in-memory database, so the fixtures register this with
+    ``once=True``: it seeds on the pool's first physical connection, and every
+    later connection (overflow or recycled) sees the committed data. It is a
+    ``connect`` listener rather than a ``first_connect`` one because it has to
+    run after Semolina's own listener has loaded the semantic_views extension.
     """
     cur = dbapi_conn.cursor()
     cur.execute("""
@@ -154,8 +157,8 @@ def duckdb_pool() -> Generator[Any, None, None]:
 
     Builds the Engine via ``create_engine(DuckDBConfig(...))``,
     which owns the ADBC pool and attaches the ``_load_semantic_views`` connect
-    listener. A second ``connect`` listener populates test data on each new
-    physical connection (ADBC clones are independent in-memory instances).
+    listener. A second, ``once=True`` ``connect`` listener seeds the test data on
+    the first physical connection; later connections share that database.
     Registers the Engine as ``"default"`` via the 2-arg ``register(name, engine)``.
     Yields the Engine's pool (``engine._pool``) so the pool-lifecycle tests keep
     their ``pool.connect()`` contract, then unregisters and closes on teardown.
@@ -168,7 +171,7 @@ def duckdb_pool() -> Generator[Any, None, None]:
     from semolina.config import create_engine
 
     engine = create_engine(DuckDBConfig(database=":memory:", pool_size=1))
-    event.listen(engine._pool, "connect", _setup_sales_data)
+    event.listen(engine._pool, "connect", _setup_sales_data, once=True)
 
     semolina.register("default", engine)
     yield engine._pool
@@ -183,8 +186,8 @@ def async_duckdb_engine() -> Generator[Any, None, None]:
 
     The async analog of ``duckdb_pool``: ``create_async_engine(DuckDBConfig(...))``
     owns the async ADBC pool and attaches the ``_load_semantic_views`` connect
-    listener to the inner sync pool it wraps. A second ``connect`` listener
-    populates test data on each new physical connection.
+    listener to the inner sync pool it wraps. A second, ``once=True`` ``connect``
+    listener seeds the test data once for the shared in-memory database.
 
     Yields the **engine** (not the pool) because the async tests drive
     ``aexecute``. Teardown is the inline synchronous ``close_pool`` on the inner
@@ -198,7 +201,7 @@ def async_duckdb_engine() -> Generator[Any, None, None]:
     from semolina.config import create_async_engine
 
     engine = create_async_engine(DuckDBConfig(database=":memory:", pool_size=1))
-    event.listen(engine._pool._pool, "connect", _setup_sales_data)
+    event.listen(engine._pool._pool, "connect", _setup_sales_data, once=True)
 
     yield engine
     close_pool(engine._pool._pool)
@@ -222,7 +225,7 @@ def async_duckdb_engine_two_slots() -> Generator[Any, None, None]:
     engine = create_async_engine(
         DuckDBConfig(database=":memory:", pool_size=1, max_overflow=1, timeout=3)
     )
-    event.listen(engine._pool._pool, "connect", _setup_sales_data)
+    event.listen(engine._pool._pool, "connect", _setup_sales_data, once=True)
 
     yield engine
     close_pool(engine._pool._pool)
@@ -274,10 +277,9 @@ def async_duckdb_file_engine(duckdb_file_backed_db: Path) -> Generator[Any, None
     File-backed DuckDB AsyncEngine whose pool holds more than one connection.
 
     Built on ``duckdb_file_backed_db`` rather than on an in-memory database
-    because in-memory DuckDB pins ``pool_size`` to 1 and raising it is a
-    configuration error (each pooled connection would get its own isolated
-    database), so it cannot demonstrate concurrent queries over shared data. A
-    file-backed database defaults to 5.
+    because adbc-poolhouse 1.6.x pins an in-memory ``pool_size`` to 1 and
+    rejects anything larger, so an in-memory pool cannot demonstrate concurrent
+    queries over several pooled connections. A file-backed database defaults to 5.
 
     ``pool_size`` is deliberately left unset so the config's own file-backed
     default applies — which is exactly what the adbc-poolhouse >=1.6.2 floor

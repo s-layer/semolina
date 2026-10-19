@@ -30,28 +30,17 @@ Set up an in-memory engine fixture
 ----------------------------------
 
 Build a DuckDB engine backed by ``":memory:"``, then create the table, semantic
-view, and seed rows on each new connection. DuckDB isolates in-memory databases
-per physical connection, so the setup runs on a ``connect`` event rather than
-once up front. Wrapping the ``yield`` in the engine's own ``with`` block is the
-teardown: it drops the registration and then closes the pool and the ADBC source
-connection behind it.
-
-.. note:: ``engine._pool`` is private
-
-   Attaching the listener needs the underlying SQLAlchemy pool, and ``Engine`` has no
-   public accessor for it today, so this example reaches into ``engine._pool``. Nothing
-   else gives you a per-connection hook, so it is a reasonable thing to do in a test
-   suite, but it is outside the public API: pin your Semolina version if you depend on
-   it. Do not reach for it in application code: leaving the
-   ``with`` block closes the pool for you, and
-   :py:meth:`engine.dispose() <semolina.engines.base.Engine.dispose>` closes an engine
-   you hold outside one.
+view, and seed rows once on a connection checked out with
+:py:meth:`engine.connect() <semolina.engines.base.Engine.connect>`. Every
+connection in the engine's pool opens the same in-memory database, so the rows are
+there for whichever connection runs the query. Wrapping the ``yield`` in the
+engine's own ``with`` block is the teardown: it drops the registration and then
+closes the pool, which discards the database.
 
 .. code-block:: python
 
    import pytest
    from adbc_poolhouse import DuckDBConfig
-   from sqlalchemy import event
 
    from semolina import (
        Dimension,
@@ -66,10 +55,8 @@ connection behind it.
        country = Dimension()
 
 
-   def _seed(dbapi_conn, _record):
-       cur = dbapi_conn.cursor()
-       cur.execute("INSTALL semantic_views FROM community")
-       cur.execute("LOAD semantic_views")
+   def _seed(conn):
+       cur = conn.cursor()
        cur.execute(
            "CREATE TABLE sales_data (id INTEGER, revenue INTEGER, country VARCHAR)"
        )
@@ -83,20 +70,22 @@ connection behind it.
            METRICS (s.revenue AS SUM(s.revenue))
            """)
        cur.close()
-       dbapi_conn.commit()
+       conn.commit()
 
 
    @pytest.fixture
    def sales_engine():
-       config = DuckDBConfig(database=":memory:", pool_size=1)
+       config = DuckDBConfig(database=":memory:")
        with create_engine(config, register=True) as engine:
-           event.listen(engine._pool, "connect", _seed)
+           with engine.connect() as conn:
+               _seed(conn)
            yield
 
 The ``commit()`` after ``CREATE SEMANTIC VIEW`` matters: ADBC connections open
 with ``autocommit=False``, and the ``semantic_views`` extension resolves the
-view on a separate read connection that only sees committed state. See
-:ref:`howto-backends-duckdb` for more on the extension.
+view on a separate read connection that only sees committed state. You do not
+load the extension yourself: :py:func:`~semolina.config.create_engine` loads it
+on every connection. See :ref:`howto-backends-duckdb` for more on the extension.
 
 Write a test
 ------------

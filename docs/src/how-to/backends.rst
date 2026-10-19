@@ -594,15 +594,18 @@ Connection fields
      - No
      - Open the database in read-only mode (default: ``false``)
 
-.. warning:: An in-memory database caps the pool at one connection
+.. note:: An in-memory database is shared by the whole pool
 
-   DuckDB isolates in-memory databases per connection, so several pooled connections
-   would each see a different empty database rather than sharing one. ``:memory:``
-   therefore defaults ``pool_size`` to 1, and asking for more raises a
-   ``ValidationError`` when the config is built. A file path defaults to 5, like the
-   other backends, and can be raised. Use a file whenever you need concurrency --
-   including on the async path, where a single connection serializes every query behind
-   one slot.
+   Every pooled connection is cloned from one source connection and opens its
+   database, so with ``":memory:"`` all of them see the same tables and views, including
+   connections the pool opens later to replace recycled ones. The database lasts until
+   the engine is disposed. Create your tables and views once and commit, rather than on
+   every new connection.
+
+   adbc-poolhouse 1.6.x still defaults an in-memory ``pool_size`` to 1 and raises a
+   ``ValidationError`` for anything larger. A file path defaults to 5 and can be raised,
+   so use a file when you need concurrent connections, including on the async path,
+   where a single connection serializes every query behind one slot.
 
 The semantic_views extension
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~

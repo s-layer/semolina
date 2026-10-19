@@ -876,7 +876,7 @@ def async_probe_engine() -> Generator[Any, None, None]:
     from semolina.config import create_async_engine
 
     engine = create_async_engine(DuckDBConfig(database=":memory:", pool_size=1))
-    event.listen(engine._pool._pool, "connect", setup_probe_view)
+    event.listen(engine._pool._pool, "connect", setup_probe_view, once=True)
 
     yield engine
     close_pool(engine._pool._pool)
