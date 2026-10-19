@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from adbc_poolhouse import (
     DatabricksConfig,
+    DatabricksPythonConfig,
     DuckDBConfig,
     SnowflakeConfig,
     create_pool,
@@ -41,7 +42,7 @@ __all__ = [
 
 
 # adbc-poolhouse config objects accepted by create_engine.
-WarehouseConfig = SnowflakeConfig | DatabricksConfig | DuckDBConfig
+WarehouseConfig = SnowflakeConfig | DatabricksConfig | DatabricksPythonConfig | DuckDBConfig
 
 
 @dataclass(frozen=True)
@@ -66,10 +67,24 @@ The SQL dialect for each backend is not here: every built-in ``SQLDialect`` name
 reads that. Adding a backend means a ``Dialect`` member, a dialect class and a row here.
 """
 
-# TOML ``type`` string -> (config class, dialect). Derived from ``_BACKENDS`` rather than
-# written out, and kept as its own module attribute because tests patch it.
+_ALTERNATE_CONFIGS: dict[str, tuple[type, Dialect]] = {
+    "databricks-python": (DatabricksPythonConfig, Dialect.DATABRICKS),
+}
+"""
+Further adbc-poolhouse configs that reach a backend in ``_BACKENDS``, keyed by TOML ``type``.
+
+``DatabricksPythonConfig`` pools ``databricks-sql-connector`` connections behind poolhouse's
+ADBC-shaped adapter instead of the ADBC driver. It is the only route to Databricks
+Lakehouse//RT, which rejects the driver's Thrift transport. The warehouse and its SQL are the
+same, so it shares the Databricks dialect and engine.
+"""
+
+# TOML ``type`` string -> (config class, dialect). Derived from ``_BACKENDS`` and
+# ``_ALTERNATE_CONFIGS`` rather than written out, and kept as its own module attribute because
+# tests patch it.
 _CONFIG_MAP: dict[str, tuple[type, Dialect]] = {
-    dialect.value: (backend.config_cls, dialect) for dialect, backend in _BACKENDS.items()
+    **{dialect.value: (backend.config_cls, dialect) for dialect, backend in _BACKENDS.items()},
+    **_ALTERNATE_CONFIGS,
 }
 
 
@@ -293,7 +308,8 @@ def create_engine(
     The single public construction entry point (the SQLAlchemy
     ``create_engine`` parallel). Accepts **either** an adbc-poolhouse config
     object (``SnowflakeConfig(...)`` / ``DatabricksConfig(...)`` /
-    ``DuckDBConfig(...)``) **or** a ``.semolina.toml`` connection name. It
+    ``DatabricksPythonConfig(...)`` / ``DuckDBConfig(...)``) **or** a
+    ``.semolina.toml`` connection name. It
     creates one ADBC pool, derives the dialect from the config type, wires the
     DuckDB ``semantic_views`` connect listener when applicable, and returns the
     matching backend Engine subclass owning that pool and dialect.
@@ -549,15 +565,17 @@ def warehouse_config(
     file exists) and instantiates the matching adbc-poolhouse config class.
     ``SNOWFLAKE_*`` / ``DATABRICKS_*`` / ``DUCKDB_*`` environment variables (and a
     ``.env`` file, overridable with ``SEMOLINA_ENV_FILE``) fill any fields not
-    given in the section, so env-only setups work with no TOML file. Both password
+    given in the section, so env-only setups work with no TOML file. The
+    ``"databricks-python"`` backend reads ``DATABRICKS_PYTHON_*`` instead. Both password
     and key-pair auth are supported (whatever the config class accepts).
 
     Unlike :func:`create_engine`'s name-dispatch arm, the section is looked up by
-    backend *type* (``"snowflake"`` / ``"databricks"`` / ``"duckdb"``), matching
+    backend *type* (``"snowflake"`` / ``"databricks"`` / ``"databricks-python"`` /
+    ``"duckdb"``), matching
     how the codegen CLI and the integration test fixtures select a backend.
 
     Args:
-        backend: ``"snowflake"``, ``"databricks"``, or ``"duckdb"``.
+        backend: ``"snowflake"``, ``"databricks"``, ``"databricks-python"``, or ``"duckdb"``.
         config_path: Path to the TOML config file.
 
     Returns:

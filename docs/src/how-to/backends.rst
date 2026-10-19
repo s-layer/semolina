@@ -93,9 +93,10 @@ Configure with .semolina.toml
 :py:func:`~semolina.config.create_engine` reads its settings from a
 ``[connections.<name>]`` section of ``.semolina.toml`` in your working directory. The
 section's ``type`` selects the backend, and every other key is passed to the matching
-``adbc-poolhouse`` config class. That ``type`` value is a member of the
-:py:class:`~semolina.dialect.Dialect` enum, so ``"snowflake"``, ``"databricks"`` and
-``"duckdb"`` are the accepted values.
+``adbc-poolhouse`` config class. The accepted values are ``"snowflake"``,
+``"databricks"`` and ``"duckdb"``, the members of the :py:class:`~semolina.dialect.Dialect`
+enum, plus ``"databricks-python"`` for Databricks over the Python connector (see
+:ref:`howto-backends-databricks-rt`).
 
 Create the file in your project root:
 
@@ -548,6 +549,65 @@ identifier:
    SELECT MEASURE(`revenue`) AS `revenue`, `country` AS `country`
    FROM `main`.`analytics`.`sales`
    GROUP BY ALL
+
+.. _howto-backends-databricks-rt:
+
+Connect to Lakehouse//RT with the Python connector
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Lakehouse//RT does not accept the Thrift protocol the ADBC driver speaks, so
+``DatabricksConfig`` cannot reach it. Use adbc-poolhouse's ``DatabricksPythonConfig``
+instead. It pools ``databricks-sql-connector`` connections, which reach RT over the
+Statement Execution path, and wraps them so the rest of Semolina sees the same cursor it
+gets from ADBC. The SQL is the same Databricks SQL, so you get a ``DatabricksEngine`` and
+your models and queries don't change.
+
+This route needs the connector with its ``kernel`` extra, and no Foundry driver:
+
+.. code-block:: bash
+
+   pip install "semolina[databricks]" "databricks-sql-connector[kernel,pyarrow]>=4.3.0"
+
+Configure it in ``.semolina.toml`` with ``type = "databricks-python"``, or pass the config
+object:
+
+.. tab-set::
+
+   .. tab-item:: .semolina.toml
+
+      .. code-block:: toml
+         :caption: .semolina.toml
+
+         [connections.default]
+         type = "databricks-python"
+         host = "workspace.cloud.databricks.com"
+         http_path = "/sql/1.0/warehouses/abc123"
+         token = "dapi..."
+
+   .. tab-item:: Config object
+
+      .. code-block:: python
+
+         from adbc_poolhouse import DatabricksPythonConfig
+
+         from semolina import create_engine
+
+         create_engine(
+             DatabricksPythonConfig(
+                 host="workspace.cloud.databricks.com",
+                 http_path="/sql/1.0/warehouses/abc123",
+                 token="dapi...",
+             ),
+             register=True,
+         )
+
+The fields match ``DatabricksConfig`` apart from ``uri``, which this config doesn't take.
+Missing fields are read from ``DATABRICKS_PYTHON_*`` environment variables, not
+``DATABRICKS_*``. ``create_async_engine`` accepts the same config.
+
+Prefer ``DatabricksConfig`` for an ordinary SQL warehouse. It is the default, and
+``semolina codegen --backend databricks`` reads only its ``[connections.databricks]``
+section.
 
 Generate a model from a metric view
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
