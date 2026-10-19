@@ -663,8 +663,10 @@ setup run therefore covers every connection the pool holds now or opens later, a
 ``pool_size``.
 
 .. tab-set::
+   :sync-group: sync-async
 
    .. tab-item:: Sync
+      :sync: sync
 
       .. code-block:: python
 
@@ -696,6 +698,7 @@ setup run therefore covers every connection the pool holds now or opens later, a
              conn.commit()
 
    .. tab-item:: Async
+      :sync: async
 
       .. code-block:: python
 
@@ -708,22 +711,19 @@ setup run therefore covers every connection the pool holds now or opens later, a
              register=True,
          )
 
-         conn = await engine.connect()
-         try:
+         # SETUP_SQL is the same list as in the Sync tab
+         async with await engine.connect() as conn:
              async with conn.cursor() as cur:
-                 for (
-                     statement
-                 ) in SETUP_SQL:  # the same list as the sync tab
+                 for statement in SETUP_SQL:
                      await cur.execute(statement)
              await conn.commit()
-         finally:
-             await conn.close()
 
-      The async engine's ``connect()`` returns a handle you close yourself rather than a
-      context manager.
+      ``engine.connect()`` is awaited first, and the connection it returns is then used as
+      an async context manager, which hands it back to the pool on exit.
 
 Put this next to the code that builds the engine, such as your web framework's startup
-hook, so it runs once in each process before the first query.
+hook, so it runs once in each process before the first query. :ref:`howto-web-api` shows
+that hook for FastAPI, including disposing the engine at shutdown.
 ``PROVIDER credential_chain`` reads AWS credentials from the environment, an instance
 profile or ``~/.aws``, so no key appears in your code.
 
@@ -751,6 +751,8 @@ See also
 - :ref:`howto-warehouse-testing` -- run your query code against a local DuckDB fixture
   instead of a warehouse
 - :ref:`howto-typed-results` -- get the same field names on every backend
+- :ref:`howto-web-api` -- build an engine in your web framework's startup hook and dispose
+  it at shutdown
 - :ref:`howto-codegen-credentials` -- the credentials ``semolina codegen`` reads, and how
   they differ from these
 - :ref:`explanation-semantic-views` -- what a semantic view is in each warehouse
