@@ -6,8 +6,15 @@ Changelog
 What changed in each Semolina release. The full history of earlier releases is on the
 `GitHub releases page <https://github.com/s-layer/semolina/releases>`_.
 
-0.7.1 (2026-10-19)
+0.8.0 (2026-10-19)
 ------------------
+
+**Databricks Lakehouse//RT.** ``create_engine`` and ``create_async_engine`` accept
+adbc-poolhouse's ``DatabricksPythonConfig``, or ``type = "databricks-python"`` in
+``.semolina.toml``. It connects through ``databricks-sql-connector`` instead of the ADBC
+driver, which is the only way to reach Lakehouse//RT. You get the same ``DatabricksEngine``,
+so your models and queries don't change, and ``dispose()`` closes its pool.
+:ref:`howto-backends-databricks-rt` has the setup.
 
 **An in-memory DuckDB pool holds more than one connection.** Semolina now requires
 adbc-poolhouse 1.7.0, which drops the ``pool_size=1`` limit on ``database = ":memory:"``.

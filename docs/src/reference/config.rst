@@ -56,9 +56,10 @@ Environment variables
 
 A field the section leaves out is read from the backend's prefixed environment
 variable: ``SNOWFLAKE_`` for Snowflake, ``DATABRICKS_`` for Databricks,
-``DATABRICKS_PYTHON_`` for ``type = "databricks-python"``, ``DUCKDB_`` for DuckDB, followed by the field name in upper case. A committed file can therefore
-omit its secret, as the example above does for ``password`` and ``token``. A value
-in the section wins over the environment. One field breaks the pattern: ``schema``
+``DATABRICKS_PYTHON_`` for ``type = "databricks-python"`` and ``DUCKDB_`` for DuckDB,
+followed by the field name in upper case. A committed file can therefore omit its secret,
+as the example above does for ``password`` and ``token``. A value in the section wins over
+the environment. One field breaks the pattern: ``schema``
 is read from an unprefixed ``SCHEMA`` variable on Snowflake and Databricks, so set
 it in the file. ``semolina codegen`` also reads a ``.env``
 file; see :ref:`howto-codegen-credentials`.
