@@ -236,17 +236,19 @@ class Engine(_EngineBase, ABC):
         Tear down the owned ADBC pool and release its driver resources.
 
         The public counterpart to :func:`semolina.config.create_engine`: closes
-        the pool this engine owns. ADBC-backed pools (Snowflake, Databricks,
-        DuckDB) are closed via adbc-poolhouse's ``close_pool`` so the underlying
-        ADBC driver resources are released; any other pool falls back to a plain
-        ``pool.close()``. Idempotent only insofar as the underlying pool's
-        ``close`` is — callers should dispose an engine once.
+        the pool this engine owns. adbc-poolhouse pools are closed via its
+        ``close_pool`` so the underlying driver resources are released: an ADBC
+        pool (Snowflake, Databricks, DuckDB) carries its ``_adbc_source``, and a
+        pool over a non-ADBC backend (``DatabricksPythonConfig``) its
+        ``_native_backend``. Any other pool falls back to a plain ``pool.close()``.
+        Idempotent only insofar as the underlying pool's ``close`` is — callers
+        should dispose an engine once.
 
         This is the single sanctioned teardown path; :func:`semolina.registry.reset` and
         test fixtures call it instead of reaching into ``engine._pool``.
         """
         pool = self._pool
-        if hasattr(pool, "_adbc_source"):
+        if hasattr(pool, "_adbc_source") or hasattr(pool, "_native_backend"):
             from adbc_poolhouse import close_pool
 
             close_pool(pool)
