@@ -644,6 +644,103 @@ database file's name. ``CREATE SEMANTIC VIEW`` in ``orig.duckdb`` stores
    own tables. Keep the DDL in a script so you can rerun it, rather than copying a
    database file between environments.
 
+.. _howto-backends-duckdb-setup:
+
+Attach catalogs and create secrets at startup
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Your semantic views may read tables that live outside the database file: an Iceberg
+catalog such as an Amazon S3 Tables bucket, another DuckDB file, or Parquet on S3. DuckDB
+saves none of that setup in the database file. Extensions you ``LOAD``, secrets you
+``CREATE``, and catalogs you ``ATTACH`` last only while the database is open, so your
+application has to run them each time it starts.
+
+Run them once, straight after :py:func:`~semolina.config.create_engine`, on a connection
+checked out with :py:meth:`engine.connect() <semolina.engines.base.Engine.connect>`. Every
+connection in the engine's pool opens the same DuckDB database, and extensions, secrets
+and attached catalogs belong to that database rather than to one connection. A single
+setup run therefore covers every connection the pool holds now or opens later, at any
+``pool_size``.
+
+.. tab-set::
+
+   .. tab-item:: Sync
+
+      .. code-block:: python
+
+         from adbc_poolhouse import DuckDBConfig
+
+         from semolina import create_engine
+
+         SETUP_SQL = [
+             "INSTALL aws",
+             "INSTALL httpfs",
+             "INSTALL iceberg",
+             "LOAD aws",
+             "LOAD httpfs",
+             "LOAD iceberg",
+             "CREATE OR REPLACE SECRET s3tables (TYPE s3, PROVIDER credential_chain)",
+             "ATTACH IF NOT EXISTS 'arn:aws:s3tables:eu-west-2:111122223333:bucket/analytics' "
+             "AS s3t (TYPE iceberg, ENDPOINT_TYPE s3_tables)",
+         ]
+
+         engine = create_engine(
+             DuckDBConfig(database="views.duckdb", pool_size=4),
+             register=True,
+         )
+
+         with engine.connect() as conn:
+             with conn.cursor() as cur:
+                 for statement in SETUP_SQL:
+                     cur.execute(statement)
+             conn.commit()
+
+   .. tab-item:: Async
+
+      .. code-block:: python
+
+         from adbc_poolhouse import DuckDBConfig
+
+         from semolina import create_async_engine
+
+         engine = create_async_engine(
+             DuckDBConfig(database="views.duckdb", pool_size=4),
+             register=True,
+         )
+
+         conn = await engine.connect()
+         try:
+             async with conn.cursor() as cur:
+                 for (
+                     statement
+                 ) in SETUP_SQL:  # the same list as the sync tab
+                     await cur.execute(statement)
+             await conn.commit()
+         finally:
+             await conn.close()
+
+      The async engine's ``connect()`` returns a handle you close yourself rather than a
+      context manager.
+
+Put this next to the code that builds the engine, such as your web framework's startup
+hook, so it runs once in each process before the first query.
+``PROVIDER credential_chain`` reads AWS credentials from the environment, an instance
+profile or ``~/.aws``, so no key appears in your code.
+
+.. warning:: Commit the setup, or the pool undoes it
+
+   ADBC connections open with ``autocommit=False``, so the setup statements run inside a
+   transaction. Without ``commit()``, other connections in the pool cannot see the secret,
+   and when the setup connection goes back to the pool its rollback undoes the
+   ``ATTACH``. The next query then fails with
+   ``Binder Error: Catalog "s3t" does not exist!``, even on the connection that ran the
+   setup.
+
+Settings that DuckDB scopes to one connection, such as ``SET search_path``, are the
+exception to the run-once rule: they do not carry over to the pool's other connections.
+Name tables by their full ``catalog.schema.table`` path in your ``CREATE SEMANTIC VIEW``
+DDL instead of relying on a search path.
+
 See also
 --------
 
