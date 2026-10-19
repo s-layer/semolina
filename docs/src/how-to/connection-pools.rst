@@ -276,12 +276,13 @@ async-only tuning knob.
    This applies to async engines too. The async pool offloads the same checkout to a
    worker thread, so the same exception surfaces from ``aexecute()``.
 
-DuckDB is the one backend that sizes itself from what you point it at. An in-memory
-database pins ``pool_size`` to 1 and refuses anything larger; a file-backed path
-defaults to 5, like the other backends, and can be raised. Use a file whenever you need
-concurrent connections, including on the async path, where a single connection
-serializes every query behind one slot. :ref:`howto-backends-duckdb` has the reason and
-the error you get for asking an in-memory database for more.
+DuckDB is the one backend that sizes itself from what you point it at. With
+adbc-poolhouse 1.6.x an in-memory database pins ``pool_size`` to 1 and refuses anything
+larger; a file-backed path defaults to 5, like the other backends, and can be raised.
+Use a file whenever you need concurrent connections, including on the async path, where
+a single connection serializes every query behind one slot. All of a pool's connections
+share one in-memory database, so the limit is not about data:
+:ref:`howto-backends-duckdb` has the details.
 
 The pool is also your concurrency bound. adbc-poolhouse gives each async pool a
 capacity limiter sized to ``pool_size + max_overflow``, so that many queries can be in
