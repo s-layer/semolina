@@ -6,7 +6,7 @@ Two claims, which fail for different reasons:
 - The ``all`` extra reaches ``async``. Every CI test job syncs with ``--extra all``, so an
   ``all`` that dropped ``async`` would stop the async suite running in CI while it still
   passed locally. The version floors are not restated here: ``pyproject.toml`` is their one
-  home, with the reasoning for each (1.6.2, not 1.5.0 or 1.6.1) written beside it.
+  home, with the reasoning for each written beside it.
 - ``import semolina`` does not import ``anyio``. That must hold for a plain
   ``pip install semolina``, but anyio *is* installed in this dev venv, so the check runs in a
   child interpreter and looks at that process's ``sys.modules``. CI's ``packaging-smoke``

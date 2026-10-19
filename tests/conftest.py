@@ -231,6 +231,28 @@ def async_duckdb_engine_two_slots() -> Generator[Any, None, None]:
     close_pool(engine._pool._pool)
 
 
+@pytest.fixture
+def async_duckdb_engine_default_pool() -> Generator[Any, None, None]:
+    """
+    ``async_duckdb_engine`` with adbc-poolhouse's default in-memory ``pool_size``.
+
+    Leaves ``pool_size`` unset, so the pool holds 5 connections (adbc-poolhouse
+    >=1.7.0). Every one of them is a clone of the same source and shares its
+    in-memory database, which the ``once=True`` listener seeds on the first.
+    """
+    pytest.importorskip("adbc_driver_duckdb")
+    from adbc_poolhouse import DuckDBConfig, close_pool
+    from sqlalchemy import event
+
+    from semolina.config import create_async_engine
+
+    engine = create_async_engine(DuckDBConfig(database=":memory:"))
+    event.listen(engine._pool._pool, "connect", _setup_sales_data, once=True)
+
+    yield engine
+    close_pool(engine._pool._pool)
+
+
 @pytest.fixture(scope="session")
 def duckdb_file_backed_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """
@@ -276,13 +298,13 @@ def async_duckdb_file_engine(duckdb_file_backed_db: Path) -> Generator[Any, None
     """
     File-backed DuckDB AsyncEngine whose pool holds more than one connection.
 
-    Built on ``duckdb_file_backed_db`` so the concurrent-query tests also
-    cover a file-backed pool; in-memory pools are covered elsewhere. A
-    file-backed database defaults to 5.
+    Built on ``duckdb_file_backed_db`` so the concurrent-query tests cover a
+    file-backed pool; ``async_duckdb_engine_default_pool`` covers the
+    in-memory one.
 
-    ``pool_size`` is deliberately left unset so the config's own file-backed
-    default applies — which is exactly what the adbc-poolhouse >=1.6.2 floor
-    makes real, since earlier versions ignored the config's tuning fields.
+    ``pool_size`` is deliberately left unset so the config's default of 5
+    applies. adbc-poolhouse releases before 1.6.0 ignored the config's tuning
+    fields on the async path.
 
     The data and semantic view already live in the file, so no data-seeding
     connect listener is needed; ``create_async_engine`` still attaches the

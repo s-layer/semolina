@@ -14,7 +14,7 @@ adbc-poolhouse 1.7.0, which drops the ``pool_size=1`` limit on ``database = ":me
 An in-memory pool defaults to 5 connections, and every one of them shares the same
 database, so concurrent and async queries no longer need a database file. Create your
 tables and views once rather than on each new connection:
-:ref:`howto-backends-duckdb` shows how.
+:ref:`howto-warehouse-testing` shows how.
 
 The testing tutorial and the warehouse-testing guide seed their in-memory fixtures the
 same way.
