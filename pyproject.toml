@@ -1,6 +1,6 @@
 [project]
 name = "semolina"
-version = "0.7.0"
+version = "0.7.1"
 description = "A Pythonic ORM for querying data warehouse semantic views (Snowflake, Databricks, DuckDB)"
 readme = "README.md"
 authors = [
@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "adbc-poolhouse>=1.6.4",
+    "adbc-poolhouse>=1.7.0",
 ]
 
 [project.scripts]
@@ -86,7 +86,7 @@ async = [
     # Not before 1.6.4: more concurrent checkouts than the pool holds stalled every
     # query until the checkout timeout, because waiting checkouts held the same thread
     # limiter the connected tasks needed to finish and return their connections.
-    "adbc-poolhouse[async]>=1.6.4",
+    "adbc-poolhouse[async]>=1.7.0",
 ]
 pyarrow = [
     # Optional: the Arrow result surface — `fetch_arrow_table`, `fetch_record_batch`,

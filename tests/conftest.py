@@ -276,10 +276,9 @@ def async_duckdb_file_engine(duckdb_file_backed_db: Path) -> Generator[Any, None
     """
     File-backed DuckDB AsyncEngine whose pool holds more than one connection.
 
-    Built on ``duckdb_file_backed_db`` rather than on an in-memory database
-    because adbc-poolhouse 1.6.x pins an in-memory ``pool_size`` to 1 and
-    rejects anything larger, so an in-memory pool cannot demonstrate concurrent
-    queries over several pooled connections. A file-backed database defaults to 5.
+    Built on ``duckdb_file_backed_db`` so the concurrent-query tests also
+    cover a file-backed pool; in-memory pools are covered elsewhere. A
+    file-backed database defaults to 5.
 
     ``pool_size`` is deliberately left unset so the config's own file-backed
     default applies — which is exactly what the adbc-poolhouse >=1.6.2 floor

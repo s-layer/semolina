@@ -73,16 +73,16 @@ wheels = [
 
 [[package]]
 name = "adbc-poolhouse"
-version = "1.6.4"
+version = "1.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "adbc-driver-manager" },
     { name = "pydantic-settings" },
     { name = "sqlalchemy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/98/58/e71bc6640c6bba337cc5044b28edc31bf7d825f8936a05777db2259c1c9b/adbc_poolhouse-1.6.4.tar.gz", hash = "sha256:94a4d82478cbcea76c824ebf741e163a99b47b55125816caf70ea4b6dab4abfa", size = 69516, upload-time = "2026-10-16T18:36:35.145Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8a/8d/ae9075ba82735cf1d8456acae97d7007914b61e4b93fbde3252f911d403b/adbc_poolhouse-1.7.0.tar.gz", hash = "sha256:c39b25afd19f7fa6ab49f8036237342bab148471934b010bd094f84d6e1745d0", size = 69302, upload-time = "2026-10-19T15:12:47.233Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/66/59/884e7e6449996f418158d5a5fe10fb8338fd6a8fd15a0f426749eb57320b/adbc_poolhouse-1.6.4-py3-none-any.whl", hash = "sha256:251258f291b38da84e33e17084c556164d2612b773282a0235a24e1900f6772a", size = 87372, upload-time = "2026-10-16T18:36:33.808Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/d8/f6c81be76c1bda73e3fb7be27d144c9d36e682b804841e03c4965d989dd6/adbc_poolhouse-1.7.0-py3-none-any.whl", hash = "sha256:b6d427249fdc26233e5ad2d4ad21f63924abaf7885e3e9ecbe6249d9f180cd25", size = 87029, upload-time = "2026-10-19T15:12:45.757Z" },
 ]
 
 [package.optional-dependencies]
@@ -1831,7 +1831,7 @@ wheels = [
 
 [[package]]
 name = "semolina"
-version = "0.7.0"
+version = "0.7.1"
 source = { editable = "." }
 dependencies = [
     { name = "adbc-poolhouse" },
@@ -1922,8 +1922,8 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "adbc-poolhouse", specifier = ">=1.6.4" },
-    { name = "adbc-poolhouse", extras = ["async"], marker = "extra == 'async'", specifier = ">=1.6.4" },
+    { name = "adbc-poolhouse", specifier = ">=1.7.0" },
+    { name = "adbc-poolhouse", extras = ["async"], marker = "extra == 'async'", specifier = ">=1.7.0" },
     { name = "adbc-poolhouse", extras = ["snowflake"], marker = "extra == 'snowflake'" },
     { name = "arrowmodel", marker = "extra == 'arrowmodel'", specifier = ">=1.0.0" },
     { name = "databricks-sql-connector", extras = ["pyarrow"], marker = "extra == 'databricks'", specifier = ">=4.2.5" },
