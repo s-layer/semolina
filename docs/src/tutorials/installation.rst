@@ -161,8 +161,9 @@ A plain ``pip install semolina`` picks up no part of this. The async stack bring
 ``anyio`` dependency with it, and Semolina keeps that out of a base install: nothing is
 imported until you call an async entry point. The ``all`` extra includes ``async``.
 
-The extra requires ``adbc-poolhouse[async]>=1.6.4``. Earlier releases could deadlock on a
-cancelled query, or stall every query when more ran at once than the pool holds.
+The extra requires ``adbc-poolhouse[async]>=1.7.0``. Releases before 1.6.4 could deadlock
+on a cancelled query, or stall every query when more ran at once than the pool holds, and
+1.7.0 lets an in-memory DuckDB pool hold more than one connection.
 
 .. _tutorial-installation-result-extras:
 

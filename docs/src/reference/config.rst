@@ -56,9 +56,10 @@ Environment variables
 
 A field the section leaves out is read from the backend's prefixed environment
 variable: ``SNOWFLAKE_`` for Snowflake, ``DATABRICKS_`` for Databricks,
-``DATABRICKS_PYTHON_`` for ``type = "databricks-python"``, ``DUCKDB_`` for DuckDB, followed by the field name in upper case. A committed file can therefore
-omit its secret, as the example above does for ``password`` and ``token``. A value
-in the section wins over the environment. One field breaks the pattern: ``schema``
+``DATABRICKS_PYTHON_`` for ``type = "databricks-python"`` and ``DUCKDB_`` for DuckDB,
+followed by the field name in upper case. A committed file can therefore omit its secret,
+as the example above does for ``password`` and ``token``. A value in the section wins over
+the environment. One field breaks the pattern: ``schema``
 is read from an unprefixed ``SCHEMA`` variable on Snowflake and Databricks, so set
 it in the file. ``semolina codegen`` also reads a ``.env``
 file; see :ref:`howto-codegen-credentials`.
@@ -98,10 +99,8 @@ These fields are accepted by all connection types:
    Backend identifier. One of ``"snowflake"``, ``"databricks"``,
    ``"databricks-python"``, or ``"duckdb"``.
 
-``pool_size`` *integer, default 5 (DuckDB in-memory: 1)*
-   Number of connections to keep in the pool. A file-backed DuckDB database
-   defaults to 5 like the other backends; with adbc-poolhouse 1.6.x,
-   ``database = ":memory:"`` defaults to 1 and rejects anything higher.
+``pool_size`` *integer, default 5*
+   Number of connections to keep in the pool.
 
 ``max_overflow`` *integer, default 3*
    Extra connections allowed beyond ``pool_size`` under load.
@@ -286,10 +285,8 @@ These fields are accepted by all connection types:
 
       .. note::
 
-         Every pooled connection shares one in-memory database. adbc-poolhouse
-         1.6.x still enforces ``pool_size=1`` for it: setting ``pool_size > 1``
-         with ``database = ":memory:"`` raises a ``ValidationError``. Use a file
-         path for concurrent connections.
+         Every pooled connection shares one in-memory database, so create
+         your tables and views once rather than on each connection.
 
 
 See also

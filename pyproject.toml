@@ -1,6 +1,6 @@
 [project]
 name = "semolina"
-version = "0.7.0"
+version = "0.8.0"
 description = "A Pythonic ORM for querying data warehouse semantic views (Snowflake, Databricks, DuckDB)"
 readme = "README.md"
 authors = [
@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "adbc-poolhouse>=1.6.4",
+    "adbc-poolhouse>=1.7.0",
 ]
 
 [project.scripts]
@@ -69,7 +69,7 @@ codegen-lint = [
 ]
 async = [
     # Optional: pulls in adbc-poolhouse's async stack (and its anyio dependency) for
-    # `create_async_engine` / `aexecute`. Two separate reasons set this floor.
+    # `create_async_engine` / `aexecute`. Several separate reasons set this floor.
     #
     # Not 1.5.0: before 1.6.0 `create_async_pool` hard-coded `pool_size=5` and ignored
     # the config's own value, so a `DuckDBConfig(database=":memory:", pool_size=1)`
@@ -86,7 +86,10 @@ async = [
     # Not before 1.6.4: more concurrent checkouts than the pool holds stalled every
     # query until the checkout timeout, because waiting checkouts held the same thread
     # limiter the connected tasks needed to finish and return their connections.
-    "adbc-poolhouse[async]>=1.6.4",
+    #
+    # Not before 1.7.0: an in-memory DuckDB pool was capped at `pool_size=1`, so an
+    # async engine over `:memory:` serialized every query behind one connection.
+    "adbc-poolhouse[async]>=1.7.0",
 ]
 pyarrow = [
     # Optional: the Arrow result surface — `fetch_arrow_table`, `fetch_record_batch`,

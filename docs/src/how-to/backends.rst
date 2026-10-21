@@ -662,10 +662,8 @@ Connection fields
    the engine is disposed. Create your tables and views once and commit, rather than on
    every new connection.
 
-   adbc-poolhouse 1.6.x still defaults an in-memory ``pool_size`` to 1 and raises a
-   ``ValidationError`` for anything larger. A file path defaults to 5 and can be raised,
-   so use a file when you need concurrent connections, including on the async path,
-   where a single connection serializes every query behind one slot.
+   An in-memory pool defaults to 5 connections like any other, so concurrent queries
+   work without a database file.
 
 The semantic_views extension
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~

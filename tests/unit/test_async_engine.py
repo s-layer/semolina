@@ -185,6 +185,32 @@ class TestAsyncConcurrency:
 
         assert inner_pool.checkedout() == 0
 
+    async def test_in_memory_pool_connections_share_one_database(
+        self, sales_query: Query, async_duckdb_engine_default_pool: Any
+    ) -> None:
+        """
+        A default in-memory pool holds more than one connection, all over the seeded data.
+
+        The first cursor stays open while the second query runs, so the second must
+        check out a different physical connection. It still sees the rows the
+        ``once=True`` listener wrote through the first, which it could not if each
+        pooled connection opened its own in-memory database.
+        """
+        engine = async_duckdb_engine_default_pool
+        inner_pool = engine._pool._pool
+        assert inner_pool.size() == 5
+
+        expected = {"US": 1500, "CA": 2000}
+        async with await engine.aexecute(sales_query) as first:
+            async with await engine.aexecute(sales_query) as second:
+                assert inner_pool.checkedout() == 2
+                second_rows = {row["country"]: row["revenue"] async for row in second}
+            first_rows = {row["country"]: row["revenue"] async for row in first}
+
+        assert first_rows == expected
+        assert second_rows == expected
+        assert inner_pool.checkedout() == 0
+
 
 class TestAsyncEngineScopesItsOwnTeardown:
     """

@@ -441,10 +441,9 @@ def heavy_async_engine(heavy_database: HeavyDatabase) -> Generator[Any, None, No
     """
     An AsyncEngine over the expensive file-backed database.
 
-    File-backed rather than in-memory for the same reason
-    ``async_duckdb_file_engine`` is: in-memory DuckDB pins ``pool_size`` to 1,
-    and the pool-recovery assertion wants a pool that can hand out a fresh
-    connection after one has been invalidated.
+    File-backed because the heavy database is expensive to build, so it is
+    generated once per session; the pool-recovery assertion wants a pool that
+    can hand out a fresh connection after one has been invalidated.
     """
     pytest.importorskip("adbc_driver_duckdb")
     from adbc_poolhouse import DuckDBConfig, close_pool
