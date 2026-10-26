@@ -38,6 +38,10 @@ arguments: regenerate it once. Snowflake introspection now also runs
 ``DESCRIBE SEMANTIC VIEW`` and one ``TAG_REFERENCES`` query, and Databricks introspection
 reads ``information_schema.column_tags``. :ref:`howto-models-metadata` has the details.
 
+**Fixed: Snowflake derived metrics in codegen.** A view-level derived metric, which
+Snowflake reports with the kind ``DERIVED_METRIC``, now introspects as a metric. It used
+to come back with a ``derived_metric`` role that no field class matches.
+
 **Fixed: date and time filters on Snowflake.** A ``.where()`` value that is a ``date``,
 ``datetime`` or ``time`` failed at execution on Snowflake with ``Unsupported bind param
 type``, because the Snowflake ADBC driver can't bind those types. Semolina now writes them

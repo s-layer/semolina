@@ -90,6 +90,7 @@ _TAG_DOMAINS = {
     "DIMENSION": "SEMANTIC DIMENSION",
     "FACT": "SEMANTIC FACT",
     "METRIC": "SEMANTIC METRIC",
+    "DERIVED_METRIC": "SEMANTIC METRIC",
 }
 """``TAG_REFERENCES``' domain for each member kind ``DESCRIBE SEMANTIC VIEW`` reports."""
 
@@ -252,7 +253,10 @@ def _introspect_snowflake(cursor: Any, view_name: str) -> IntrospectedView:
     column_names: list[str] = []
     for row in cursor.fetchall():
         d: dict[str, Any] = dict(zip(columns, row, strict=True))
-        field_type = cast("Literal['metric', 'dimension', 'fact']", str(d["kind"]).lower())
+        # A view-level derived metric reports its kind as DERIVED_METRIC. It is queried
+        # like any other metric, so it is one.
+        kind = "METRIC" if d["kind"] == "DERIVED_METRIC" else str(d["kind"])
+        field_type = cast("Literal['metric', 'dimension', 'fact']", kind.lower())
         type_json: dict[str, object] = json.loads(d["data_type"])
         py_type = snowflake_json_type_to_python(type_json)
         data_type = f"TODO: {d['data_type']}" if py_type is None else py_type
