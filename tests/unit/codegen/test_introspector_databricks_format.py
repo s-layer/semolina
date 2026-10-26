@@ -72,6 +72,7 @@ class TestSemanticFormatFromDatabricksFormat:
             ({"type": "EXACT", "places": 3}, {"decimals": [3, 3]}),
             ({"type": "MAX", "places": 2}, {"decimals": [0, 2]}),
             ({"type": "ALL"}, {}),
+            ({"type": "EXACT", "places": True}, {}),
         ],
     )
     def test_decimal_places(self, decimal_places: dict[str, Any], expected: dict[str, Any]) -> None:
