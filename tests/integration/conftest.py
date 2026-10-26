@@ -241,6 +241,20 @@ def snowflake_engine(
                     " DIMENSIONS (sales_data.country AS country)"
                     ' METRICS (sales_data."gross" AS SUM(revenue))'
                 )
+                # Comments and synonyms, at member and view level, for the metadata
+                # introspection reads. Its own view, so sales_view's cassettes stay valid.
+                cur.execute(
+                    "CREATE SEMANTIC VIEW annotated_view"
+                    " TABLES (sales_data)"
+                    " DIMENSIONS"
+                    " (sales_data.country AS country"
+                    " WITH SYNONYMS = ('nation', 'land') COMMENT = 'Ship-to country',"
+                    " sales_data.region AS region)"
+                    " METRICS"
+                    " (sales_data.revenue AS SUM(revenue)"
+                    " WITH SYNONYMS = ('sales') COMMENT = 'Gross revenue')"
+                    " COMMENT = 'Sales by country'"
+                )
                 cur.execute(
                     "CREATE TABLE orders_data"
                     " (ordered_at TIMESTAMP_NTZ, ordered_on DATE, amount NUMBER)"
@@ -413,6 +427,31 @@ def databricks_engine(
                     "    expr: AVG(price)\n"
                     "  - name: total_qty\n"
                     "    expr: SUM(qty)\n"
+                    "$$"
+                )
+                # Comments, display names and synonyms, at member and view level, for the
+                # metadata introspection reads. Its own view, so sales_view's cassettes
+                # stay valid.
+                cur.execute(
+                    f"CREATE OR REPLACE VIEW {catalog}.{schema_name}.annotated_view"
+                    " WITH METRICS LANGUAGE YAML AS $$\n"
+                    "version: 1.1\n"
+                    "comment: Sales by country\n"
+                    f"source: {catalog}.{schema_name}.sales_data\n"
+                    "dimensions:\n"
+                    "  - name: country\n"
+                    "    expr: country\n"
+                    "    comment: Ship-to country\n"
+                    "    display_name: Country\n"
+                    "    synonyms: [nation, land]\n"
+                    "  - name: region\n"
+                    "    expr: region\n"
+                    "measures:\n"
+                    "  - name: revenue\n"
+                    "    expr: SUM(revenue)\n"
+                    "    comment: Gross revenue\n"
+                    "    display_name: Revenue\n"
+                    "    synonyms: [sales]\n"
                     "$$"
                 )
                 cur.execute(

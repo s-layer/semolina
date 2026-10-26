@@ -78,6 +78,25 @@ def test_databricks_introspect_decimal_and_date_types(databricks_engine: Any) ->
     }
 
 
+def test_databricks_introspect_reads_comments_display_names_and_synonyms(
+    databricks_engine: Any,
+) -> None:
+    """Column comments, display names and synonyms, and the view's own comment."""
+    view = databricks_engine.introspect("annotated_view")
+
+    assert view.description == "Sales by country"
+    by_name = {field.name: field for field in view.fields}
+    assert by_name["country"].description == "Ship-to country"
+    assert by_name["country"].label == "Country"
+    assert by_name["country"].synonyms == ("nation", "land")
+    assert by_name["revenue"].description == "Gross revenue"
+    assert by_name["revenue"].label == "Revenue"
+    assert by_name["revenue"].synonyms == ("sales",)
+    assert by_name["region"].description == ""
+    assert by_name["region"].label is None
+    assert by_name["region"].synonyms == ()
+
+
 def test_snowflake_introspect_semantic_view(snowflake_engine: Any) -> None:
     """
     SHOW COLUMNS IN VIEW over ADBC, qualified from the session -> IntrospectedView.
@@ -113,3 +132,23 @@ def test_snowflake_introspect_semantic_view(snowflake_engine: Any) -> None:
     # and the lower-cased Python name folds back to them: no source name is needed.
     assert by_name["country"].description == ""
     assert by_name["country"].source_name is None
+    assert by_name["country"].synonyms == ()
+    assert view.description == ""
+
+
+def test_snowflake_introspect_reads_comments_and_synonyms(snowflake_engine: Any) -> None:
+    """
+    Member comments from ``SHOW COLUMNS``; synonyms and the view's comment from ``DESCRIBE``.
+
+    Snowflake has no display-name slot, so every label is None.
+    """
+    view = snowflake_engine.introspect("annotated_view")
+
+    assert view.description == "Sales by country"
+    by_name = {field.name: field for field in view.fields}
+    assert by_name["country"].description == "Ship-to country"
+    assert by_name["country"].synonyms == ("nation", "land")
+    assert by_name["revenue"].description == "Gross revenue"
+    assert by_name["revenue"].synonyms == ("sales",)
+    assert by_name["region"].synonyms == ()
+    assert {field.label for field in view.fields} == {None}
