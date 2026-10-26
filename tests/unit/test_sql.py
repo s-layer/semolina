@@ -1455,6 +1455,82 @@ def to_sql_where(predicate: object, dialect: str) -> str:
     return where[0].removeprefix("WHERE ")
 
 
+class Dated(SemanticView, view="orders"):
+    """A model with temporal dimensions, for the Snowflake temporal-binding tests."""
+
+    revenue = Metric()
+    ordered_on = Dimension()
+    ordered_at = Dimension()
+    country = Dimension()
+
+
+class TestSnowflakeInlinesTemporalValues:
+    """
+    Snowflake writes date, timestamp and time values as literals and binds the rest.
+
+    The Snowflake ADBC driver refuses a temporal bind parameter (``NOT_IMPLEMENTED:
+    Unsupported bind param type date32``, and the same for ``timestamp[us]``), so a filter
+    on a date column failed at execute time while ``to_sql()`` showed working SQL.
+    """
+
+    @pytest.mark.parametrize(
+        ("value", "literal"),
+        [
+            (datetime.date(2024, 4, 1), "DATE '2024-04-01'"),
+            (datetime.datetime(2024, 4, 1, 12, 30), "TIMESTAMP '2024-04-01T12:30:00'"),
+            (
+                datetime.datetime(2024, 4, 1, 12, 30, tzinfo=datetime.UTC),
+                "'2024-04-01T12:30:00Z'::TIMESTAMP_TZ",
+            ),
+            (datetime.time(17, 45), "TIME '17:45:00'"),
+        ],
+    )
+    def test_a_temporal_value_is_inlined(self, value: object, literal: str):
+        """The literal ``to_sql()`` shows is the SQL that runs, with nothing bound for it."""
+        query = Dated.query().metrics(Dated.revenue).where(Dated.ordered_on >= value)
+        sql, params = SnowflakeDialect().create_builder().build_select_with_params(query)
+        assert sql == (
+            f'SELECT AGG("REVENUE") AS "revenue"\nFROM "ORDERS"\nWHERE "ORDERED_ON" >= {literal}'
+        )
+        assert params == []
+
+    def test_other_values_beside_it_still_bind_in_order(self):
+        """Only the temporal values leave the parameter list; the rest keep their slots."""
+        query = (
+            Dated.query()
+            .metrics(Dated.revenue)
+            .where(
+                Dated.country == "US",
+                Dated.ordered_on.between(datetime.date(2024, 1, 1), datetime.date(2024, 3, 31)),
+                Dated.country.in_(["CA", "MX"]),
+                Dated.revenue > 10,
+            )
+        )
+        sql, params = SnowflakeDialect().create_builder().build_select_with_params(query)
+        assert sql == (
+            'SELECT AGG("REVENUE") AS "revenue"\n'
+            'FROM "ORDERS"\n'
+            'WHERE (("COUNTRY" = ? AND "ORDERED_ON" BETWEEN DATE \'2024-01-01\' AND '
+            "DATE '2024-03-31') AND \"COUNTRY\" IN (?, ?))\n"
+            'HAVING AGG("REVENUE") > ?'
+        )
+        assert params == ["US", "CA", "MX", 10]
+
+    @pytest.mark.parametrize("dialect", ["databricks", "duckdb"])
+    def test_other_dialects_are_unchanged(self, dialect: str):
+        """Databricks still binds a date; DuckDB still renders it into ``where_clause``."""
+        query = (
+            Dated.query()
+            .metrics(Dated.revenue)
+            .where(Dated.ordered_on >= datetime.date(2024, 4, 1))
+        )
+        _sql, params = resolve_dialect(dialect).create_builder().build_select_with_params(query)
+        if dialect == "databricks":
+            assert params == [datetime.date(2024, 4, 1)]
+        else:
+            assert params == ["\"ordered_on\" >= DATE '2024-04-01'"]
+
+
 class TestToSqlRendersEachDialectsLiterals:
     """
     ``to_sql()`` renders values as the chosen dialect's SQL literals, so its output runs.
