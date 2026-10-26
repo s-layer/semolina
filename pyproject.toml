@@ -187,7 +187,7 @@ dev = [
     "pdbpp>=0.12.0.post1",
     "pydantic-settings>=2.7.0",
     "pytest>=8.0.0",
-    "pytest-adbc-replay>=1.1.1",
+    "pytest-adbc-replay>=1.2.0",
     "pytest-cov>=6.0.0",
     "pytest-xdist>=3.6.0",
     "ruff>=0.15.1",
@@ -317,6 +317,11 @@ adbc_scrub_keys = [
     "password",
     "token",
     "access_token",
+]
+# Databricks DESCRIBE ... AS JSON results carry the view owner's email and audit
+# timestamps; redact them in recorded .arrow results.
+adbc_scrub_result_keys = [
+    "owner created_time created_by last_access",
 ]
 
 [tool.coverage.report]
