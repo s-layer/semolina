@@ -25,9 +25,9 @@ one built from attributes would. :func:`query_spec_schema` describes the accepte
 one model as a JSON Schema whose enums list that model's own field names, which is what a
 tool definition handed to a language model wants.
 
-Every mistake in the data raises :class:`~semolina.exceptions.SemolinaSpecError`, whose ``path`` says where it
-is (``where.or[1].value``) so that the caller can hand the message back to whoever wrote
-the data.
+Every mistake in the data raises :class:`~semolina.exceptions.SemolinaSpecError`, whose
+``path`` says where it is (``where.or[1].value``) so that the caller can hand the message
+back to whoever wrote the data.
 """
 
 from __future__ import annotations
