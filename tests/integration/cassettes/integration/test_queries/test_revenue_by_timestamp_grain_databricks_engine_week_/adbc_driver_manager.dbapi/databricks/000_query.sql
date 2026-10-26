@@ -1,0 +1,7 @@
+SELECT
+  MEASURE("revenue") AS "revenue",
+  CAST(TIMESTAMP_TRUNC("ordered_at", WEEK) AS DATE) AS "ordered_at__week"
+FROM "orders_view"
+GROUP BY ALL
+ORDER BY
+  "ordered_at__week" ASC
