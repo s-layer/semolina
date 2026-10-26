@@ -1516,6 +1516,20 @@ class TestSnowflakeInlinesTemporalValues:
         )
         assert params == ["US", "CA", "MX", 10]
 
+    def test_a_time_with_a_time_zone_is_refused_while_building(self):
+        """
+        It has no Snowflake literal and the driver cannot bind it, so it fails before execute.
+
+        The error names the value, where a bound one would fail inside the driver.
+        """
+        query = (
+            Dated.query()
+            .metrics(Dated.revenue)
+            .where(Dated.ordered_at == datetime.time(9, 0, tzinfo=datetime.UTC))
+        )
+        with pytest.raises(ValueError, match="time with a time zone"):
+            SnowflakeDialect().create_builder().build_select_with_params(query)
+
     @pytest.mark.parametrize("dialect", ["databricks", "duckdb"])
     def test_other_dialects_are_unchanged(self, dialect: str):
         """Databricks still binds a date; DuckDB still renders it into ``where_clause``."""

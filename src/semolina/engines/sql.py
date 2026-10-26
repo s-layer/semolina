@@ -45,6 +45,8 @@ from semolina.filters import (
 if TYPE_CHECKING:
     # Only for annotations: a runtime ``Dialect`` here would shadow the module
     # ``__getattr__`` that keeps the old ``engines.sql.Dialect`` name working.
+    from collections.abc import Callable
+
     from semolina.dialect import Dialect
     from semolina.query import Query
 
@@ -1376,8 +1378,9 @@ class SQLBuilder:
             query: Query object to convert to SQL
 
         Returns:
-            Tuple of (sql_template, params_list). The sql_template contains
-            dialect-specific placeholders ('?') instead of literal values.
+            Tuple of (sql_template, params_list). The sql_template has the dialect's
+            placeholder ('?') for each bound value, and the literal for each value
+            :meth:`SQLDialect.binds` refuses, such as a date on Snowflake.
 
         Raises:
             ValueError: If ``order_by()`` names a dimension or fact the query does not select.
@@ -1385,17 +1388,7 @@ class SQLBuilder:
         sql, params = self._build_template(query)
         if not self.dialect.supports_parameterized_queries:
             return self._render_literal_sql(sql, params), []
-        segments = sql.split(_SLOT)
-        out = [segments[0]]
-        bound: list[Any] = []
-        for segment, param in zip(segments[1:], params, strict=True):
-            if self.dialect.binds(param):
-                out.append(self.dialect.placeholder)
-                bound.append(param)
-            else:
-                out.append(self.dialect.render_literal(param))
-            out.append(segment)
-        return "".join(out), bound
+        return self._fill_slots(sql, params, inline=lambda value: not self.dialect.binds(value))
 
     def _build_template(self, query: Query) -> tuple[str, list[Any]]:
         """
@@ -1503,6 +1496,25 @@ class SQLBuilder:
         Raises:
             ValueError: If the placeholder count does not match ``len(params)``.
         """
+        return self._fill_slots(sql_template, params, inline=lambda _value: True)[0]
+
+    def _fill_slots(
+        self, sql_template: str, params: list[Any], *, inline: Callable[[Any], bool]
+    ) -> tuple[str, list[Any]]:
+        """
+        Fill each ``_SLOT`` once: with a value's literal, or with a placeholder that binds it.
+
+        Args:
+            sql_template: SQL string with one ``_SLOT`` per value.
+            params: Parameter values, in slot order.
+            inline: Says whether a value is written as its literal rather than bound.
+
+        Returns:
+            The SQL, and the values left to bind, in placeholder order.
+
+        Raises:
+            ValueError: If the slot count does not match ``len(params)``.
+        """
         segments = sql_template.split(_SLOT)
         placeholder_count = len(segments) - 1
         if placeholder_count != len(params):
@@ -1512,10 +1524,15 @@ class SQLBuilder:
             )
             raise ValueError(msg)
         out = [segments[0]]
+        bound: list[Any] = []
         for segment, param in zip(segments[1:], params, strict=True):
-            out.append(self.dialect.render_literal(param))
+            if inline(param):
+                out.append(self.dialect.render_literal(param))
+            else:
+                out.append(self.dialect.placeholder)
+                bound.append(param)
             out.append(segment)
-        return "".join(out)
+        return "".join(out), bound
 
     def render_inline(self, sql_template: str, params: list[Any]) -> str:
         """
