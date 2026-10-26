@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import datetime
 import json
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 from hypothesis import given, settings
@@ -20,6 +20,7 @@ from jsonschema import Draft202012Validator
 from models import Sales
 
 from semolina import Dimension, Fact, Metric, NullsOrdering, Row, SemanticView, SemolinaError
+from semolina.fields import GRAINS
 from semolina.filters import IsNull, Lookup, Predicate
 from semolina.spec import (
     SemolinaSpecError,
@@ -998,6 +999,112 @@ class TestSchema:
             spec: dict[str, Any] = {"metrics": ["order_count"], "dimensions": ["region"]}
             spec[key] = value
             assert validator.is_valid(spec) == _builds(spec), spec
+
+
+class TestGrainNames:
+    """``<dimension>__<grain>`` names, in the builder and in the schema."""
+
+    def test_a_grain_name_selects_the_grain(self):
+        """The same query as ``.dimensions(Orders.ordered_at.grain("week"))``."""
+        built = build_query(Orders, {"metrics": ["revenue"], "dimensions": ["ordered_at__week"]})
+        expected = (
+            Orders.query().metrics(Orders.revenue).dimensions(Orders.ordered_at.grain("week"))
+        )
+        assert built == expected
+
+    def test_a_grain_name_orders(self):
+        """``-`` sorts a selected grain descending."""
+        built = build_query(
+            Orders,
+            {
+                "metrics": ["revenue"],
+                "dimensions": ["ordered_at__week"],
+                "order_by": ["-ordered_at__week"],
+            },
+        )
+        assert built.to_sql().endswith('ORDER BY "ordered_at__week" DESC')
+
+    def test_ordering_by_an_unselected_grain_is_refused(self):
+        """As for any dimension, the grain must be selected too."""
+        error = _spec_error(
+            Orders,
+            {
+                "metrics": ["revenue"],
+                "dimensions": ["region"],
+                "order_by": ["-ordered_at__week"],
+            },
+        )
+        assert error.path == "order_by[0]"
+        assert "needs it in 'dimensions' too" in str(error)
+
+    def test_a_grain_cannot_be_filtered(self):
+        """The error names the base field to filter instead."""
+        error = _spec_error(
+            Orders,
+            {
+                "metrics": ["revenue"],
+                "where": {"field": "ordered_at__week", "op": "eq", "value": "2024-01-01"},
+            },
+        )
+        assert error.path == "where.field"
+        assert "Filter 'ordered_at' instead" in str(error)
+
+    def test_a_date_has_no_hour_grain(self):
+        """The grain is checked against the declared type."""
+        error = _spec_error(Orders, {"metrics": ["revenue"], "dimensions": ["ordered_on__hour"]})
+        assert error.path == "dimensions[0]"
+        assert "'ordered_on' is a date, so it has no 'hour'" in str(error)
+
+    def test_schema_lists_the_grains_of_declared_dates_and_timestamps(self):
+        """Every grain of a timestamp, day and coarser of a date, none of anything else."""
+        schema = query_spec_schema(Orders)
+        dimensions = schema["properties"]["dimensions"]["items"]["enum"]
+        grains = [name for name in dimensions if "__" in name]
+        assert grains == [
+            *(f"ordered_on__{unit}" for unit in ("year", "quarter", "month", "week", "day")),
+            *(f"ordered_at__{unit}" for unit in GRAINS),
+        ]
+        assert set(grains) <= set(schema["$defs"]["order"]["properties"]["field"]["enum"])
+        order_by = schema["properties"]["order_by"]["items"]["anyOf"][0]["enum"]
+        assert {"ordered_at__week", "-ordered_at__week"} <= set(order_by)
+        filter_fields = schema["$defs"]["filter"]["anyOf"][0]["properties"]["field"]["enum"]
+        assert not any("__" in name for name in filter_fields)
+
+    def test_every_listed_grain_builds_for_optional_declarations(self):
+        """The schema offers a nullable column's grains, and the builder accepts each one."""
+
+        class Nullable(SemanticView, view="nullable"):
+            revenue = Metric[int]()
+            ordered_at = Dimension[datetime.datetime | None]()
+            ordered_on = Dimension[Optional[datetime.date]]()  # noqa: UP045
+
+        schema = query_spec_schema(Nullable)
+        grains = [n for n in schema["properties"]["dimensions"]["items"]["enum"] if "__" in n]
+        assert len(grains) == len(GRAINS) + 5
+        validator = Draft202012Validator(schema)
+        for name in grains:
+            spec = {"metrics": ["revenue"], "dimensions": [name]}
+            assert validator.is_valid(spec)
+            build_query(Nullable, spec)
+
+    def test_a_field_named_like_a_grain_is_listed_once(self):
+        """JSON Schema ``enum`` values must be unique; the declared field wins."""
+
+        class Clash(SemanticView, view="clash"):
+            revenue = Metric[int]()
+            ordered_at = Dimension[datetime.datetime]()
+            ordered_at__week = Dimension[datetime.date]()
+
+        schema = query_spec_schema(Clash)
+        enums = [
+            schema["properties"]["dimensions"]["items"]["enum"],
+            schema["properties"]["order_by"]["items"]["anyOf"][0]["enum"],
+            schema["$defs"]["order"]["properties"]["field"]["enum"],
+        ]
+        for enum in enums:
+            assert len(enum) == len(set(enum)), enum
+        built = build_query(Clash, {"metrics": ["revenue"], "dimensions": ["ordered_at__week"]})
+        assert built.selected_dimensions == (Clash.ordered_at__week,)
 
 
 def test_spec_error_is_exported_from_the_package_root():

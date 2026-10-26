@@ -10,7 +10,7 @@ against a calendar oracle by the warehouse tests in ``tests/integration/test_que
 from __future__ import annotations
 
 import datetime
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 
@@ -77,6 +77,18 @@ class TestGrain:
     def test_an_untyped_dimension_takes_any_grain(self):
         """Without a declared type there is nothing to check against."""
         assert Orders.untyped.grain("second").name == "untyped__second"
+
+    def test_an_optional_declaration_is_checked_as_the_type_it_wraps(self):
+        """``X | None`` and ``Optional[X]`` are a nullable column of type ``X``."""
+
+        class Nullable(SemanticView, view="nullable"):
+            ordered_at = Dimension[datetime.datetime | None]()
+            ordered_on = Dimension[Optional[datetime.date]]()  # noqa: UP045
+
+        assert Nullable.ordered_at.grain("second").name == "ordered_at__second"
+        assert Nullable.ordered_on.grain("day").name == "ordered_on__day"
+        with pytest.raises(ValueError, match="'ordered_on' is a date, so it has no 'hour'"):
+            Nullable.ordered_on.grain("hour")
 
     def test_a_non_temporal_type_is_refused(self):
         """A string dimension cannot be truncated."""
