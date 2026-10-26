@@ -1305,6 +1305,49 @@ class TestMetadataIsComparedToo:
         assert row.status == STATUS_DRIFT
         assert "label" in row.detail
 
+    def test_a_freshly_generated_model_round_trips_its_label_and_format(
+        self, annotated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """
+        A label and a format written by codegen read back as no drift.
+
+        The format goes out as its normal form through the renderer and comes back through
+        the reader's ``literal_eval`` (a nested list stays a list) and ``parse_block``. A
+        mismatch anywhere in that chain would show as drift on every freshly generated
+        model, on every backend that reads formats.
+        """
+        import dataclasses
+
+        from s_layer_semantic_formats import from_compact_json
+
+        engine_type = type(annotated_engine)
+        introspect = engine_type.introspect
+        block = from_compact_json("category", '{"value":{"order":["DE","FR"]}}')
+
+        def tagged(self: Engine, view_name: str) -> IntrospectedView:
+            view = introspect(self, view_name)
+            fields = [
+                dataclasses.replace(f, label="Country", semantic_format=block)
+                if f.name == "country"
+                else f
+                for f in view.fields
+            ]
+            return dataclasses.replace(view, fields=fields)
+
+        monkeypatch.setattr(engine_type, "introspect", tagged)
+        monkeypatch.setattr(
+            engine_type,
+            "introspected_metadata",
+            frozenset({"description", "label", "synonyms", "semantic_format"}),
+        )
+        committed = committed_from_warehouse(annotated_engine, "annotated")
+
+        assert committed.fields["country"].metadata["label"] == "Country"
+        assert "semantic_format" in committed.fields["country"].metadata
+        report = check_view(annotated_engine, "annotated", committed)
+        assert report.has_drift is False, report
+        assert row_named(report, "country").status == STATUS_MATCH
+
     def test_an_engine_that_reads_no_metadata_compares_none(
         self, annotated_engine: Engine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1440,3 +1483,11 @@ class TestSemanticFormatIsComparedByNormalForm:
     def test_an_invalid_committed_block_is_drift_not_a_crash(self) -> None:
         committed = {"semantic_format": {"value": {"kind": "bogus"}}}
         assert "committed is not a valid block" in self.drift(committed, self.warehouse())
+
+    @pytest.mark.parametrize("committed", ["currency", 3, ("currency",)])
+    def test_a_committed_format_that_is_not_a_mapping_is_drift_not_a_crash(
+        self, committed: object
+    ) -> None:
+        """The reader passes on whatever literal it found, not only a dict."""
+        detail = self.drift({"semantic_format": committed}, self.warehouse())
+        assert "committed is not a valid block" in detail

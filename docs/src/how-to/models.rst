@@ -492,7 +492,10 @@ The ``S_LAYER_*`` tags are the ones
 block. Semolina reads only a member's own tags, not ones it inherits from the view or a
 logical table, and rebuilds the block from them. A tag that doesn't make a valid block for
 that kind of member, such as a ``currency`` kind on a dimension, makes introspection
-raise ``ValueError`` naming the member, rather than leaving the format out.
+raise ``ValueError`` naming the member, rather than leaving the format out. Reading the
+tags needs the same role to read them: on Databricks, access to the catalog's
+``information_schema``. If the warehouse refuses the tag lookup, introspection raises
+``SemolinaIntrospectionError`` saying so, rather than reporting the view as missing.
 
 The metadata travels from the warehouse to your model. Change a description in the
 warehouse and regenerate, rather than editing the Python, since ``codegen --check``

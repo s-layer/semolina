@@ -138,7 +138,8 @@ def test_snowflake_introspect_reads_comments_and_synonyms(snowflake_engine: Any)
     """
     Member comments from ``SHOW COLUMNS``; synonyms and the view's comment from ``DESCRIBE``.
 
-    Snowflake has no display-name slot, so every label is None.
+    Snowflake has no display-name slot; a label comes only from an ``S_LAYER_LABEL`` tag,
+    and this view has none, so every label is None.
     """
     view = snowflake_engine.introspect("annotated_view")
 
