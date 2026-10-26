@@ -320,6 +320,34 @@ class TestDatabricksEngineIntrospect:
                 tag_rows=[("country", "S_LAYER_KIND", "currency")],
             )
 
+    def test_a_refused_tag_lookup_is_not_reported_as_a_missing_view(self) -> None:
+        """
+        ``DESCRIBE`` found the view, so a refused ``column_tags`` read says so.
+
+        A role with no access to the catalog's ``information_schema`` would otherwise be told
+        the view does not exist.
+        """
+        pytest.importorskip("adbc_driver_manager")
+        from adbc_driver_manager import AdbcStatusCode, ProgrammingError
+
+        from semolina.exceptions import SemolinaIntrospectionError
+
+        engine = _make_databricks_engine()
+        cursor = MagicMock(name="cursor")
+        cursor.fetchone.return_value = (_located(self._DESCRIBE_JSON),)
+
+        def refuse_tags(sql: str) -> None:
+            if "column_tags" in sql:
+                raise ProgrammingError("PERMISSION_DENIED", status_code=AdbcStatusCode.UNKNOWN)
+
+        cursor.execute.side_effect = refuse_tags
+        with (
+            _patch_introspect_cursor(engine, cursor),
+            pytest.raises(SemolinaIntrospectionError, match="S_LAYER tags") as raised,
+        ):
+            engine.introspect("sales_view")
+        assert "PERMISSION_DENIED" in str(raised.value)
+
     def test_reads_comment_display_name_and_synonyms(self) -> None:
         """
         ``comment`` sits on the column; ``display_name`` and ``synonyms`` under ``metadata``.

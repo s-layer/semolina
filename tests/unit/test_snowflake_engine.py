@@ -400,6 +400,48 @@ class TestSnowflakeEngineIntrospect:
             " AND TAG_NAME IN ('S_LAYER_KIND', 'S_LAYER_LABEL', 'S_LAYER_SPEC')"
         )
 
+    def test_introspect_reads_tags_from_a_session_database_with_a_dot_in_its_name(
+        self,
+    ) -> None:
+        """
+        The tag lookup names the session's database as one quoted part, dots and all.
+
+        ``CREATE DATABASE "my.db"`` is a legal name, and ``SHOW COLUMNS`` and ``DESCRIBE``
+        already read its views; the tag query must not cut it at the dot.
+        """
+        cursor = _show_columns_cursor(
+            self._TAGGED_SHOW, session=("my.db", "PUBLIC"), describe_rows=self._TAGGED_DESCRIBE
+        )
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor):
+            engine.introspect("sales_view")
+
+        (sql,) = [
+            c[0][0] for c in cursor.execute.call_args_list if c[0][0].startswith("SELECT MEMBER")
+        ]
+        assert ' FROM TABLE("my.db".INFORMATION_SCHEMA.TAG_REFERENCES(' in sql
+        assert ' FROM TABLE("my.INFORMATION_SCHEMA' not in sql
+
+    def test_introspect_reads_a_facts_tags_in_the_fact_domain(self) -> None:
+        """A fact's tags are looked up in ``SEMANTIC FACT`` and make a fact's block."""
+        cursor = _show_columns_cursor(
+            [("UNITS", "FACT", json.dumps({"type": "FIXED", "scale": 0}), "")],
+            describe_rows=[("FACT", "UNITS", "SALES_DATA", "DATA_TYPE", "NUMBER(38,0)")],
+            tag_rows=[("UNITS", "S_LAYER_KIND", "number")],
+        )
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor):
+            view = engine.introspect("sales_view")
+
+        (sql,) = [
+            c[0][0] for c in cursor.execute.call_args_list if c[0][0].startswith("SELECT MEMBER")
+        ]
+        assert """!"SALES_DATA"."UNITS"', 'SEMANTIC FACT'))""" in sql
+        (units,) = view.fields
+        assert units.field_type == "fact"
+        assert units.semantic_format is not None
+        assert units.semantic_format.normal_form()["value"]["kind"] == "number"
+
     def test_introspect_escapes_a_quote_in_a_member_name(self) -> None:
         """A member name is catalogue data inside a string literal, so its quote is doubled."""
         cursor = _show_columns_cursor(
@@ -668,6 +710,40 @@ class TestSnowflakeEngineIntrospectErrors:
         engine = _make_snowflake_engine()
         with _patch_connect(engine, cursor), pytest.raises(SemolinaViewNotFoundError):
             engine.introspect("nonexistent_view")
+
+    def test_a_refused_tag_lookup_is_not_reported_as_a_missing_view(self) -> None:
+        """
+        ``SHOW`` and ``DESCRIBE`` found the view, so a refused tag lookup says so.
+
+        A role that can describe the view but not read its tags would otherwise be told the
+        view does not exist.
+        """
+        pytest.importorskip("adbc_driver_manager")
+        from adbc_driver_manager import AdbcStatusCode, ProgrammingError
+
+        from semolina.exceptions import SemolinaIntrospectionError
+
+        cursor = _show_columns_cursor(
+            TestSnowflakeEngineIntrospect._TAGGED_SHOW,
+            describe_rows=TestSnowflakeEngineIntrospect._TAGGED_DESCRIBE,
+        )
+        execute = cursor.execute.side_effect
+
+        def refuse_tags(sql: str) -> None:
+            if sql.startswith("SELECT MEMBER"):
+                raise ProgrammingError(
+                    "Insufficient privileges", status_code=AdbcStatusCode.UNKNOWN
+                )
+            execute(sql)
+
+        cursor.execute.side_effect = refuse_tags
+        engine = _make_snowflake_engine()
+        with (
+            _patch_connect(engine, cursor),
+            pytest.raises(SemolinaIntrospectionError, match="S_LAYER tags") as raised,
+        ):
+            engine.introspect("sales_view")
+        assert "Insufficient privileges" in str(raised.value)
 
     @pytest.mark.parametrize(
         ("error_class", "expected"),
