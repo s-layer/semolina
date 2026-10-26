@@ -187,9 +187,11 @@ chosen dialect's SQL literal instead: ``Sales.country == "O'Brien"`` previews as
 it.
 
 A value with no literal in that dialect can't be previewed, so ``to_sql()`` raises for it
-rather than print SQL that would not run. On Snowflake that is ``bytes``, a ``timedelta``
-and a ``time`` with a time zone: the query still executes, because those values are bound,
-but preview it with ``to_sql("duckdb")`` instead. Databricks has no literal for ``bytes``,
+rather than print SQL that would not run. On Snowflake that is ``bytes`` and a
+``timedelta``: the query still executes, because those values are bound, but preview it
+with ``to_sql("duckdb")`` instead. A ``time`` with a time zone can't be sent to Snowflake
+at all, since the driver binds no time values, so building the query raises
+``ValueError``. Compare against a naive ``time`` instead. Databricks has no literal for ``bytes``,
 a ``timedelta`` or a ``time`` either, so the preview raises there too. At execution the
 value goes to the driver as a bound parameter; whether the driver and warehouse accept it
 depends on the type, and these three are untested.
