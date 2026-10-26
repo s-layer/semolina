@@ -132,9 +132,9 @@ never appears in the SQL string at all:
      - How a ``.where()`` value is sent
      - What the driver receives
    * - Snowflake
-     - Bound parameter
+     - Bound parameter, except a date, timestamp or time, which is inlined
      - ``WHERE "COUNTRY" = ?`` with ``['US']``, or ``HAVING AGG("REVENUE") > ?`` with
-       ``[1000]``
+       ``[1000]``; ``WHERE "ORDERED_ON" >= DATE '2024-04-01'`` with no parameter
    * - DuckDB, dimension or fact condition
      - Inlined as a SQL literal, inside one bound ``where_clause`` string
      - ``where_clause := ?`` with the string ``"country" = 'US'``
@@ -151,8 +151,11 @@ later of the Databricks ADBC driver, the first release that accepts bind
 parameters; see :ref:`howto-backends-databricks`. A value of ``US' OR '1'='1``
 reaches the warehouse as one country name that matches nothing, not as extra SQL.
 
-DuckDB is the one backend that inlines values, and only for a dimension or fact
-condition. The condition goes into ``semantic_view()``'s ``where_clause`` argument,
+The Snowflake ADBC driver can't bind a date, timestamp or time, so Semolina writes those
+values into the SQL as the literals ``to_sql()`` shows, through the same escaping
+function as below. Every other Snowflake value is bound.
+
+DuckDB inlines more widely, but only for a dimension or fact condition. The condition goes into ``semantic_view()``'s ``where_clause`` argument,
 which takes SQL text, and a ``?`` inside that text cannot be bound. So Semolina renders
 the condition through a single escaping function, ``render_literal``, which doubles any
 single quote, and binds the finished string as one parameter.
@@ -176,8 +179,8 @@ single quote, and binds the finished string as one parameter.
 Read a ``to_sql()`` preview
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-At execution Snowflake and Databricks bind each value, and DuckDB binds its
-``where_clause``. ``to_sql()`` cannot show a binding, so it writes every value as the
+At execution Snowflake and Databricks bind each value (Snowflake inlines a date,
+timestamp or time), and DuckDB binds its ``where_clause``. ``to_sql()`` cannot show a binding, so it writes every value as the
 chosen dialect's SQL literal instead: ``Sales.country == "O'Brien"`` previews as
 ``WHERE "COUNTRY" = 'O''Brien'`` on Snowflake, a date as ``DATE '2024-01-02'``, and a
 ``Decimal`` as its digits. You can paste a preview into the warehouse's console and run

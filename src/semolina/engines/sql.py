@@ -336,6 +336,23 @@ class SQLDialect(ABC):
     assumption; the backends how-to tells users to leave it off.
     """
 
+    def binds(self, value: Any) -> bool:  # noqa: ARG002
+        """
+        Say whether the driver accepts ``value`` as a bound parameter.
+
+        Consulted for each filter value when :attr:`supports_parameterized_queries` is
+        ``True``: a value the driver refuses is written into the SQL with
+        :meth:`render_literal` instead, and the others stay bound. The default binds
+        everything.
+
+        Args:
+            value: A filter value.
+
+        Returns:
+            ``True`` to bind it, ``False`` to inline its literal.
+        """
+        return True
+
     def render_literal(self, value: Any) -> str:
         """
         Render a Python value as a safe SQL literal (standard SQL escaping).
@@ -650,11 +667,29 @@ class SnowflakeDialect(SQLDialect):
         """Return ? placeholder for the Snowflake ADBC driver (qmark paramstyle)."""
         return "?"
 
+    def binds(self, value: Any) -> bool:
+        """
+        Refuse to bind a date, datetime or time: the Snowflake ADBC driver rejects them.
+
+        It fails such a parameter at execute time with ``NOT_IMPLEMENTED: Unsupported bind
+        param type date32`` (``timestamp[us]``, ``time64[us]`` likewise), so these values
+        are written as the literals :meth:`render_literal` gives, which ``to_sql()`` already
+        shows.
+
+        Args:
+            value: A filter value.
+
+        Returns:
+            ``False`` for a ``datetime.date``, ``datetime.datetime`` or ``datetime.time``.
+        """
+        return not isinstance(value, datetime.date | datetime.time)
+
     def render_literal(self, value: Any) -> str:
         r"""
         Render a Python value as a Snowflake SQL literal.
 
-        Snowflake binds its values, so this renders only what ``to_sql()`` shows. A Snowflake
+        Snowflake binds most values, so this renders what ``to_sql()`` shows and the date,
+        timestamp and time values :meth:`binds` refuses. A Snowflake
         single-quoted string reads the backslash as an escape, so a string's backslashes are
         doubled before the standard rendering doubles its quotes: ``a\b`` is ``'a\\b'``.
 
@@ -1350,7 +1385,17 @@ class SQLBuilder:
         sql, params = self._build_template(query)
         if not self.dialect.supports_parameterized_queries:
             return self._render_literal_sql(sql, params), []
-        return sql.replace(_SLOT, self.dialect.placeholder), params
+        segments = sql.split(_SLOT)
+        out = [segments[0]]
+        bound: list[Any] = []
+        for segment, param in zip(segments[1:], params, strict=True):
+            if self.dialect.binds(param):
+                out.append(self.dialect.placeholder)
+                bound.append(param)
+            else:
+                out.append(self.dialect.render_literal(param))
+            out.append(segment)
+        return "".join(out), bound
 
     def _build_template(self, query: Query) -> tuple[str, list[Any]]:
         """

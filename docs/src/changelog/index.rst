@@ -24,6 +24,11 @@ a ``datetime`` below that, and weeks start on Monday, whatever Snowflake's ``WEE
 says. On DuckDB it needs ``semantic_views`` 0.16.0 or later. :ref:`howto-time-grain` has
 the details.
 
+**Fixed: date and time filters on Snowflake.** A ``.where()`` value that is a ``date``,
+``datetime`` or ``time`` failed at execution on Snowflake with ``Unsupported bind param
+type``, because the Snowflake ADBC driver can't bind those types. Semolina now writes them
+into the SQL as literals and keeps binding everything else.
+
 0.8.0 (2026-10-19)
 ------------------
 
