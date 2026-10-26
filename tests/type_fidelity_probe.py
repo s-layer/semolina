@@ -350,10 +350,12 @@ def describe_raw_types(
     """
     Read the raw warehouse type of each field, before any Semolina mapping is applied.
 
-    Re-runs the same ``DESCRIBE SELECT * FROM semantic_view(...)`` statement
-    ``DuckDBEngine.introspect`` runs, and keeps column 1 verbatim. The raw type is captured
-    here rather than parsed back out of the ``TODO: `` prefix, because that prefix only
-    survives for types the map has no entry for — raw and mapped are two separate values.
+    Runs the ``DESCRIBE SELECT * FROM semantic_view(...)`` statement ``DuckDBEngine.introspect``
+    falls back to, and keeps column 1 verbatim. From ``semantic_views`` v0.14.0 introspection
+    takes its types from ``DESCRIBE SEMANTIC VIEW`` instead, so this is an independent read
+    that :func:`measure_duckdb` checks against ``IntrospectedField.raw_type``. The raw type
+    is captured here rather than parsed back out of the ``TODO: `` prefix, because that prefix
+    only survives for types the map has no entry for — raw and mapped are two separate values.
 
     Args:
         cursor: An ADBC DBAPI cursor.
@@ -896,6 +898,14 @@ def measure_duckdb() -> DuckDBMeasurement:
                 }
                 for field_name in DUCKDB_PROBE_FIELDS:
                     introspected = by_name[field_name]
+                    if introspected.raw_type != raw_types[field_name]:
+                        # The mapped annotation was made from `raw_type`; recording a raw type
+                        # from another route beside it would pair two types nobody compared.
+                        msg = (
+                            f"{field_name}: introspection typed it {introspected.raw_type!r}, "
+                            f"but DESCRIBE SELECT reports {raw_types[field_name]!r}"
+                        )
+                        raise RuntimeError(msg)
                     mapped = introspected.data_type or ""
                     value_type = value_types[field_name]
                     rows.append(

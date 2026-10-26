@@ -26,11 +26,15 @@ result, so there is a real answer waiting for you.
 **Databricks** answers ``DESCRIBE TABLE EXTENDED ... AS JSON`` with a type per
 column, measures included, alongside the metric view's own YAML definition.
 
-**DuckDB** reports nothing. ``DESCRIBE SEMANTIC VIEW`` returns an empty type for
-every field, so Semolina runs ``DESCRIBE SELECT * FROM semantic_view(...)``
-instead, which is a query-shaped question rather than a catalogue lookup.
+**DuckDB** answers ``DESCRIBE SEMANTIC VIEW`` with a type per field from
+``semantic_views`` v0.14.0. The extension works it out when the command runs,
+as the type the field's column has in a ``semantic_view()`` query. Older
+releases return an empty type, so for them Semolina runs
+``DESCRIBE SELECT * FROM semantic_view(...)`` instead, which is a query-shaped
+question rather than a catalogue lookup. It does the same for any field the
+extension could not type.
 
-DuckDB just makes the general case visible. Definition-time type information
+Older DuckDB extensions just make the general case visible. Definition-time type information
 for a metric is a convenience the warehouse may offer, and it is derived from
 the underlying columns; the authoritative answer exists only once a query is
 planned.

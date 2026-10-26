@@ -29,7 +29,7 @@ they stop rediscovering the answer per driver.
 |---|---|---|---|---|---|
 | snowflake | `adbc-driver-snowflake` 1.10.0 (Foundry tag `go/v1.10.0`) | yes | implemented in `go/statement.go` via `gosnowflake.WithDescribeOnly`, which is a describe-only metadata round trip rather than a warehouse execution; refuses with `StatusNotImplemented` ("executing schema with bound params not yet implemented") whenever bind parameters are present | only for parameterized queries | driver-source |
 | databricks | Foundry `go/v0.1.3` | no | `go/statement.go` embeds `driverbase.StatementImplBase` and defines no `ExecuteSchema`, so the inherited `driverbase-go` default returns `StatusNotImplemented` | yes, the zero-row fallback is the only path | driver-source |
-| duckdb | duckdb v1.5.5 | yes | probed in this process and answered by the `execute-schema` route; the `WHERE 1=0` fallback returns an equal schema (`test_zero_row_fallback_matches_execute_schema`) | no | live |
+| duckdb | duckdb v1.5.6 | yes | probed in this process and answered by the `execute-schema` route; the `WHERE 1=0` fallback returns an equal schema (`test_zero_row_fallback_matches_execute_schema`) | no | live |
 
 "Driver X implements `adbc_execute_schema`" and "field F came back as type T" are two
 different claims with two different sources. The first is answered from driver source at a
@@ -67,8 +67,8 @@ actually returns. Each names the minimal query that produced it, the measured Ar
 the Python type the value arrives as, and a contrast case — without the contrast a single
 measurement is a coincidence rather than a rule.
 
-All four were measured through `semantic_view(...)` against DuckDB v1.5.5 with
-`semantic_views` a064166, both read from the running database rather than quoted from
+All four were measured through `semantic_view(...)` against DuckDB v1.5.6 with
+`semantic_views` v0.13.0, both read from the running database rather than quoted from
 `pyproject.toml`. Vendor rules are cited where a vendor publishes one and marked
 undocumented where none exists; a rule is never inferred from a measurement.
 
