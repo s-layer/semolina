@@ -37,6 +37,7 @@ __all__ = [
     "SemolinaMissingDependencyError",
     "SemolinaResultConsumedError",
     "SemolinaSchemaMismatchError",
+    "SemolinaSpecError",
     "SemolinaUnresolvableAnnotationError",
     "SemolinaViewNotFoundError",
     "_claim_read",
@@ -56,6 +57,33 @@ code.
 
 class SemolinaError(Exception):
     """Base class of every exception class Semolina defines."""
+
+
+class SemolinaSpecError(SemolinaError, ValueError):
+    """
+    Raised when query data names an unknown field, misuses one, or has the wrong shape.
+
+    Unlike the plain ``TypeError`` and ``ValueError`` that a mistake in Python code raises,
+    this error is about data that usually came from outside the program, such as an agent's
+    tool call passed to :func:`semolina.spec.build_query`. It is a ``SemolinaError``, so one
+    ``except`` clause catches every such mistake, and a ``ValueError``, which is what it
+    would otherwise have been.
+
+    Attributes:
+        path: Where in the data the mistake is, such as ``"where.and[0].op"``. Empty when
+            it concerns the data as a whole.
+    """
+
+    def __init__(self, message: str, path: str = "") -> None:
+        """
+        Build the error, prefixing the message with its path.
+
+        Args:
+            message: What is wrong and, where it helps, what to write instead.
+            path: Where in the data the mistake is.
+        """
+        self.path = path
+        super().__init__(f"{path}: {message}" if path else message)
 
 
 class SemolinaViewNotFoundError(SemolinaError, RuntimeError):

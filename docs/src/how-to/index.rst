@@ -24,6 +24,7 @@ run the tutorials yet, start at :ref:`tutorials`.
    models
    queries
    filtering
+   query-by-name
 
 .. toctree::
    :maxdepth: 2
