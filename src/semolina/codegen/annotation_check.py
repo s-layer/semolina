@@ -38,7 +38,6 @@ two routes still disagree — Phase 47's central finding, surfaced rather than s
 
 from __future__ import annotations
 
-import inspect
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -361,24 +360,6 @@ def _non_annotation_drift(
     return "; ".join(reasons)
 
 
-def _comparable_description(text: object) -> str:
-    """
-    Put a description in the form both sides of the comparison are read in.
-
-    A model generated before ``description=`` existed carries the description as an
-    attribute docstring, which the reader cleans as Python cleans a docstring. Cleaning the
-    warehouse's side the same way lets that model compare equal, at the cost of not
-    reporting a change that is only leading or trailing whitespace.
-
-    Args:
-        text: The description, or None for a declaration that passes none.
-
-    Returns:
-        The cleaned description, the empty string for none.
-    """
-    return inspect.cleandoc(text) if isinstance(text, str) else ""
-
-
 def _metadata_drift(
     compared: frozenset[str], field: IntrospectedField, committed_field: CommittedField
 ) -> str:
@@ -388,8 +369,9 @@ def _metadata_drift(
     Only the attributes the engine reads are compared (``Engine.introspected_metadata``): a
     backend with no slot for a label reports none, and a committed ``label=`` is then not
     drift but something the warehouse cannot hold. A metadata argument the declaration
-    leaves out reads as empty, which is what the warehouse reports for a member without one.
-    Synonyms compare as a set, since their order carries no meaning.
+    leaves out reads as empty, which is what the warehouse reports for a member without one;
+    one the reader could not evaluate (``CommittedField.unreadable``, already warned about)
+    is not compared. Synonyms compare as a set, since their order carries no meaning.
 
     Args:
         compared: The metadata attribute names the engine introspects.
@@ -401,11 +383,11 @@ def _metadata_drift(
     """
     reasons: list[str] = []
     metadata = committed_field.metadata
+    compared = compared - committed_field.unreadable
     if "description" in compared:
-        committed = _comparable_description(metadata.get("description"))
-        warehouse = _comparable_description(field.description)
-        if committed != warehouse:
-            reasons.append(f"description: committed {committed!r}, warehouse {warehouse!r}")
+        committed = metadata.get("description") or ""
+        if committed != field.description:
+            reasons.append(f"description: committed {committed!r}, warehouse {field.description!r}")
     if "label" in compared:
         committed_label = metadata.get("label")
         if committed_label != field.label:
@@ -427,6 +409,9 @@ def _view_metadata_drift(
     """
     Describe how a committed class's ``description=`` differs from the view's comment.
 
+    A ``description=`` the reader could not evaluate (already warned about) is not
+    compared.
+
     Args:
         compared: The metadata attribute names the engine introspects.
         view: The introspected view.
@@ -436,13 +421,12 @@ def _view_metadata_drift(
     Returns:
         A human-readable description, or the empty string when nothing differs.
     """
-    if committed is None or "description" not in compared:
+    if committed is None or "description" not in compared - committed.unreadable:
         return ""
-    committed_description = _comparable_description(committed.description)
-    warehouse = _comparable_description(view.description)
-    if committed_description == warehouse:
+    committed_description = committed.description or ""
+    if committed_description == view.description:
         return ""
-    return f"description: committed {committed_description!r}, warehouse {warehouse!r}"
+    return f"description: committed {committed_description!r}, warehouse {view.description!r}"
 
 
 def _metadata_annotation(field: IntrospectedField) -> str:

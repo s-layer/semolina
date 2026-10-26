@@ -173,6 +173,19 @@ passes them to ``super().__init__(pool=..., dialect=...)``. Its ``introspect()``
                ],
            )
 
+An ``IntrospectedField`` can also carry ``description``, ``label`` and ``synonyms``,
+which codegen writes as the field's arguments, and an ``IntrospectedView`` a
+``description`` for the class. ``--check`` compares only the ones your engine lists in
+:py:attr:`~semolina.engines.base.Engine.introspected_metadata`, which is empty by
+default, so declare what your ``introspect()`` fills:
+
+.. code-block:: python
+
+   class CatalogueEngine(Engine):
+       introspected_metadata = frozenset(
+           {"description", "synonyms"}
+       )
+
 Save that as ``my_engines.py`` and pass ``--backend my_engines.CatalogueEngine``. Codegen
 adds the working directory to the end of ``sys.path`` before importing it, so a module
 beside you resolves without being installed, and an installed package of the same name

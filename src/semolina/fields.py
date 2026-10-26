@@ -1030,6 +1030,12 @@ class GrainedDimension(Dimension[Any]):
         """
         # No source of its own: the builder reads the base's column and truncates it.
         super().__init__()
+        # It describes the same thing at a coarser grain, so it keeps what the base says
+        # about it. Copied, not passed in: the base already validated them.
+        self.label = base.label
+        self.description = base.description
+        self.synonyms = base.synonyms
+        self.semantic_format = base.semantic_format
         self.base = base
         self.unit: Grain = unit
         self.name = f"{_check_name(base.name)}__{unit}"

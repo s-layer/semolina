@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import ast
 import dataclasses
-import inspect
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -100,10 +99,11 @@ class CommittedField:
             written is compared instead.
         metadata: The metadata arguments the declaration passes, by name (``label``,
             ``description``, ``synonyms``, ``semantic_format``), as literal values: a string,
-            a tuple of strings, or the format's dict. A field with no ``description=`` but
-            an attribute docstring right after it reads the docstring as its description,
-            which is how codegen wrote it before ``description=`` existed. An argument the
-            reader cannot evaluate is warned about and left out, so it is not compared.
+            a tuple of strings, or the format's dict. An attribute docstring is not read: it
+            is documentation, and only ``description=`` is compared.
+        unreadable: The metadata arguments the declaration passes that the reader cannot
+            evaluate. Each is warned about and left out of ``metadata``, and the check does
+            not compare it.
     """
 
     name: str
@@ -112,6 +112,7 @@ class CommittedField:
     source_name: str | None
     resolved_annotation: str | None = None
     metadata: Mapping[str, object] = dataclasses.field(default_factory=dict)
+    unreadable: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -125,13 +126,16 @@ class CommittedModel:
         fields: Field name -> declaration: inherited fields first, then the class's own,
             each in source order.
         description: The class's ``description=`` keyword, or None when it passes none or
-            passes something the reader cannot evaluate (warned about).
+            passes something the reader cannot evaluate.
+        unreadable: ``{"description"}`` when the class passes a ``description=`` the reader
+            cannot evaluate (warned about, and not compared); otherwise empty.
     """
 
     class_name: str
     view_name: str
     fields: dict[str, CommittedField]
     description: str | None = None
+    unreadable: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -331,16 +335,20 @@ class _ClassReader:
                 subscript, self.static.resolver(self.scope), self.static.final_path
             )
         source_name = self.source_name_of(statement, value)
+        metadata, unreadable = self.metadata_of(statement, value)
         return CommittedField(
             name=target.id,
             field_class=field_class,
             annotation=annotation,
             source_name=source_name,
             resolved_annotation=resolved,
-            metadata=self.metadata_of(statement, value),
+            metadata=metadata,
+            unreadable=unreadable,
         )
 
-    def metadata_of(self, statement: ast.stmt, call: ast.Call) -> dict[str, object]:
+    def metadata_of(
+        self, statement: ast.stmt, call: ast.Call
+    ) -> tuple[dict[str, object], frozenset[str]]:
         """
         Read a field declaration's metadata arguments as literal values.
 
@@ -349,9 +357,11 @@ class _ClassReader:
             call: The field constructor call.
 
         Returns:
-            Argument name -> value, for each metadata argument the reader could evaluate.
+            Argument name -> value, for each metadata argument the reader could evaluate,
+            and the names of those it could not (each warned about).
         """
         metadata: dict[str, object] = {}
+        unreadable: set[str] = set()
         for keyword in call.keywords:
             if keyword.arg not in METADATA_ARGUMENTS:
                 continue
@@ -361,9 +371,10 @@ class _ClassReader:
                     statement,
                     f"has a {keyword.arg}= the reader cannot evaluate; it was not compared",
                 )
+                unreadable.add(keyword.arg)
                 continue
             metadata[keyword.arg] = value
-        return metadata
+        return metadata, frozenset(unreadable)
 
     def literal(self, node: ast.expr) -> object:
         """
@@ -373,8 +384,8 @@ class _ClassReader:
             node: The argument's expression.
 
         Returns:
-            The value, with lists read as tuples so ``synonyms`` compares by value, or
-            :data:`_UNREADABLE`.
+            The value, with a list or set read as a tuple so ``synonyms`` compares by
+            value however it is spelled, or :data:`_UNREADABLE`.
         """
         text = self.static.string_constant(node, self.scope)
         if text is not None:
@@ -383,7 +394,9 @@ class _ClassReader:
             value: object = ast.literal_eval(node)
         except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
             return _UNREADABLE
-        return tuple(cast("list[object]", value)) if isinstance(value, list) else value
+        if isinstance(value, list | set | frozenset):
+            return tuple(cast("list[object] | set[object] | frozenset[object]", value))
+        return value
 
     def source_name_of(self, statement: ast.stmt, call: ast.Call) -> str | None:
         """
@@ -448,19 +461,8 @@ class _ClassReader:
             Field name -> declaration, in source order.
         """
         fields: dict[str, CommittedField] = {}
-        previous: CommittedField | None = None
         for statement in self.source.node.body:
-            docstring = _string_statement(statement)
-            if previous is not None and docstring is not None:
-                if "description" not in previous.metadata:
-                    previous = dataclasses.replace(
-                        previous, metadata={**previous.metadata, "description": docstring}
-                    )
-                    fields[previous.name] = previous
-                previous = None
-                continue
             field = self.read_assignment(statement)
-            previous = field
             if field is not None:
                 fields[field.name] = field
                 self.removed.discard(field.name)
@@ -508,26 +510,6 @@ _UNREADABLE = object()
 """What :meth:`_ClassReader.literal` returns for an argument it cannot evaluate."""
 
 
-def _string_statement(statement: ast.stmt) -> str | None:
-    """
-    Return the string a bare string statement holds, as an attribute docstring does.
-
-    Args:
-        statement: A statement from a class body.
-
-    Returns:
-        The string, cleaned as :func:`inspect.cleandoc` cleans a docstring, or None when the
-        statement is anything else.
-    """
-    if (
-        isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Constant)
-        and isinstance(statement.value.value, str)
-    ):
-        return inspect.cleandoc(statement.value.value)
-    return None
-
-
 def _read_class(
     static: StaticModule, node: ast.ClassDef, warnings: list[str]
 ) -> CommittedModel | None:
@@ -566,6 +548,7 @@ def _read_class(
         fields.update(declared)
     description_keyword = next((k for k in node.keywords if k.arg == "description"), None)
     description = None
+    unreadable: frozenset[str] = frozenset()
     if description_keyword is not None:
         description = static.string_constant(description_keyword.value, source.scope)
         if description is None:
@@ -574,8 +557,13 @@ def _read_class(
                 f"{ast.unparse(description_keyword.value)} is not a string or a string "
                 "constant the reader can find; it was not compared"
             )
+            unreadable = frozenset({"description"})
     return CommittedModel(
-        class_name=node.name, view_name=view_name, fields=fields, description=description
+        class_name=node.name,
+        view_name=view_name,
+        fields=fields,
+        description=description,
+        unreadable=unreadable,
     )
 
 
