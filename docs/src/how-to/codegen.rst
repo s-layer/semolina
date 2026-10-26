@@ -756,8 +756,8 @@ Exit codes
    * - ``1``
      - Unexpected error (see stderr for details), including an unparseable
        committed file, generated source that does not parse, an installed ruff
-       that fails on it, or ``S_LAYER_*`` tags that don't make a valid format for
-       their member (see :ref:`howto-models-metadata`). Nothing is written to stdout
+       that fails on it, or ``S_LAYER_*`` tags or a Databricks ``format`` that don't
+       make a valid format for their member (see :ref:`howto-models-metadata`). Nothing is written to stdout
    * - ``2``
      - Invalid option -- an unrecognized or omitted ``--backend``, connection
        config that could not be assembled (the message names the fields, never

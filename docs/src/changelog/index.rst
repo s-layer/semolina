@@ -13,7 +13,9 @@ Unreleased
 native ``format`` of a Databricks metric view's dimensions and measures into
 ``semantic_format=`` when the column has no ``S_LAYER_*`` tags, so a metric view written by
 hand gets one too. The tags still win where both are present. See
-:ref:`howto-models-metadata` for what maps.
+:ref:`howto-models-metadata` for what maps. A model generated from such a view by an
+earlier release has no ``semantic_format=``, so ``codegen --check`` reports it as drift
+until you regenerate it.
 
 **DuckDB 2.0.** The ``duckdb`` extra now pins DuckDB 2.0.0, which installs version 0.16.0
 or later of the ``semantic_views`` extension, so time grains run on DuckDB.

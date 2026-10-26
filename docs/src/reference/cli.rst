@@ -92,7 +92,8 @@ Exit codes
    * - 1
      - Unexpected error, including an unparseable committed file under ``--check``,
        generated source that does not parse, an installed ruff that fails on it, or
-       ``S_LAYER_*`` tags that don't make a valid format for their member
+       ``S_LAYER_*`` tags or a Databricks ``format`` that don't make a valid format for
+       their member
    * - 2
      - Invalid option: an unrecognized or omitted ``--backend``, connection config
        that could not be assembled, a backend whose driver is not installed, a

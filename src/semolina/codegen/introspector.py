@@ -209,7 +209,7 @@ def _databricks_display(options: Mapping[str, object]) -> dict[str, object]:
         decimals = cast("Mapping[str, object]", places)
         rule = _lower(decimals.get("type"))
         count = decimals.get("places")
-        if rule in {"exact", "max"} and isinstance(count, int):
+        if rule in {"exact", "max"} and isinstance(count, int) and not isinstance(count, bool):
             display["decimals"] = [count if rule == "exact" else 0, count]
     compact = _DATABRICKS_COMPACT.get(str(_lower(options.get("abbreviation"))))
     if compact is not None:

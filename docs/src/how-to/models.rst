@@ -531,8 +531,8 @@ format type gives the kind: ``number``, ``currency`` (with its ``currency_code``
 ``percentage``, ``byte`` (``bytes``), ``date`` and ``date_time`` (``datetime``). Its
 options give the display hints that have a slot: ``decimal_places`` of type ``exact`` or
 ``max``, ``abbreviation`` (``compact`` is ``compact: auto``), ``hide_group_separator`` and
-``date_format``. ``scientific``, ``leading_zeros`` and ``time_format`` have no slot and
-aren't read. A numeric format on a dimension, or a date format on a measure, has no
+``date_format``. ``decimal_places`` of type ``all``, ``scientific``, the ``year_week``
+date format, ``leading_zeros`` and ``time_format`` have no slot and aren't read. A numeric format on a dimension, or a date format on a measure, has no
 S-LAYER kind, so that column gets no ``semantic_format``. When a column has both, the tags
 win, because they hold more than ``format`` can (a ``count`` rather than a ``number``, say).
 
