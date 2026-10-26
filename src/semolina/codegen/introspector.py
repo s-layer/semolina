@@ -23,12 +23,13 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from typing import Literal
 
-    from s_layer_semantic_formats import SLayerBlock
+    from s_layer_semantic_formats import Kind, SLayerBlock
 
 __all__ = [
     "PLACEHOLDER_FIELD_NAME",
     "class_name_for",
     "python_field_names",
+    "semantic_format_from_databricks_format",
     "semantic_format_from_tags",
     "synonyms_from_json",
     "IntrospectedField",
@@ -131,6 +132,157 @@ def semantic_format_from_tags(
         return from_compact_json(kind, spec, member_type=member_type)
     except SLayerValidationError as e:
         msg = f"The S_LAYER tags on {member!r} do not make a valid block: {e}"
+        raise ValueError(msg) from e
+
+
+_DATABRICKS_KINDS: dict[str, str] = {
+    "number": "number",
+    "currency": "currency",
+    "percentage": "percentage",
+    "byte": "bytes",
+    "date": "date",
+    "date_time": "datetime",
+}
+"""The S-LAYER kind each Databricks ``format`` type means."""
+
+_DATABRICKS_DATE_STYLES: dict[str, str] = {
+    "year_month_day": "iso",
+    "locale_number_month": "short",
+    "locale_short_month": "medium",
+    "locale_long_month": "long",
+}
+"""The ``display.date_style`` each Databricks ``date_format`` corresponds to."""
+
+_DATABRICKS_COMPACT: dict[str, str] = {"none": "none", "compact": "auto"}
+"""The ``display.compact`` each Databricks ``abbreviation`` corresponds to."""
+
+
+def _lower(value: object) -> object:
+    """Lower-case a string option; ``DESCRIBE`` reports Databricks' enum values upper-cased."""
+    return value.lower() if isinstance(value, str) else value
+
+
+def _databricks_format_options(native: Mapping[str, object]) -> tuple[str, Mapping[str, object]]:
+    """
+    Split a native ``format`` into its type and options, whichever way it is spelled.
+
+    The metric view's YAML writes ``{type: currency, currency_code: USD}``, and ``DESCRIBE
+    TABLE EXTENDED ... AS JSON`` reports the same format keyed by its type, as
+    ``{"currency": {"currency_code": "USD"}}``.
+
+    Args:
+        native: The column's ``metadata.format``.
+
+    Returns:
+        The lower-cased type, and its options without the type.
+
+    Raises:
+        ValueError: If the value has neither shape.
+    """
+    if "type" in native:
+        options = {key: item for key, item in native.items() if key != "type"}
+        return str(_lower(native["type"])), options
+    if len(native) == 1:
+        ((name, options),) = native.items()
+        if isinstance(options, dict):
+            return str(name).lower(), cast("Mapping[str, object]", options)
+    msg = f"expected a type and its options, got {dict(native)!r}"
+    raise ValueError(msg)
+
+
+def _databricks_display(options: Mapping[str, object]) -> dict[str, object]:
+    """
+    Read the display hints a native ``format`` holds into a ``display`` section.
+
+    ``decimal_places`` of type ``all`` (every digit the value has), ``scientific`` notation,
+    ``leading_zeros`` and ``time_format`` have no slot in the vocabulary, so they are not read.
+
+    Args:
+        options: The format's options, without its type.
+
+    Returns:
+        The ``display`` section, empty when nothing maps.
+    """
+    display: dict[str, object] = {}
+    places: object = options.get("decimal_places")
+    if isinstance(places, dict):
+        decimals = cast("Mapping[str, object]", places)
+        rule = _lower(decimals.get("type"))
+        count = decimals.get("places")
+        if rule in {"exact", "max"} and isinstance(count, int):
+            display["decimals"] = [count if rule == "exact" else 0, count]
+    compact = _DATABRICKS_COMPACT.get(str(_lower(options.get("abbreviation"))))
+    if compact is not None:
+        display["compact"] = compact
+    if options.get("hide_group_separator") is True:
+        display["grouping"] = False
+    date_style = _DATABRICKS_DATE_STYLES.get(str(_lower(options.get("date_format"))))
+    if date_style is not None:
+        display["date_style"] = date_style
+    return display
+
+
+def semantic_format_from_databricks_format(
+    member: str,
+    native: object,
+    member_type: Literal["metric", "dimension", "fact"],
+) -> SLayerBlock | None:
+    """
+    Read a Databricks metric view column's native ``format`` as an S-LAYER block.
+
+    The type gives the kind (``byte`` is ``bytes``, ``date_time`` is ``datetime``) and the
+    currency code, and the options give the display hints that have a slot. The native format
+    holds less than a block can, so a member whose ``S_LAYER_KIND`` tag is set is read from
+    its tags instead; this covers a metric view written by hand.
+
+    Args:
+        member: The member's name, for the error message.
+        native: The column's ``metadata.format`` from ``DESCRIBE TABLE EXTENDED ... AS
+            JSON``, or None when it has none.
+        member_type: The member's kind. A numeric format on a dimension, or a date format on
+            a measure, means no S-LAYER kind, so it gives no block.
+
+    Returns:
+        The block, or None when the column has no format, a type this version does not know,
+        or one that does not apply to this kind of member.
+
+    Raises:
+        ValueError: If a format of a known type does not make a valid block, such as a
+            currency without an ISO-4217 code.
+
+    Example:
+        .. code-block:: python
+
+            block = semantic_format_from_databricks_format(
+                "revenue",
+                {"currency": {"currency_code": "USD", "abbreviation": "COMPACT"}},
+                "metric",
+            )
+            block.kind  # "currency"
+    """
+    from s_layer_semantic_formats import KIND_MEMBER_TYPES, SLayerValidationError, validate_block
+
+    if not native:
+        return None
+    try:
+        if not isinstance(native, dict):
+            msg = f"expected a mapping, got {native!r}"
+            raise ValueError(msg)
+        native_type, options = _databricks_format_options(cast("Mapping[str, object]", native))
+        kind = _DATABRICKS_KINDS.get(native_type)
+        if kind is None or member_type not in KIND_MEMBER_TYPES[cast("Kind", kind)]:
+            return None
+        value: dict[str, object] = {"kind": kind}
+        if kind == "currency":
+            code = options.get("currency_code")
+            value["currency"] = code.upper() if isinstance(code, str) else code
+        block: dict[str, object] = {"value": value}
+        display = _databricks_display(options)
+        if display:
+            block["display"] = display
+        return validate_block(block, member_type)
+    except (SLayerValidationError, ValueError) as e:
+        msg = f"The Databricks format on {member!r} does not make a valid block: {e}"
         raise ValueError(msg) from e
 
 

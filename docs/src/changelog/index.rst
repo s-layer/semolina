@@ -9,6 +9,12 @@ What changed in each Semolina release. The full history of earlier releases is o
 Unreleased
 ----------
 
+**Formats from a Databricks metric view's own YAML.** ``semolina codegen`` now reads the
+native ``format`` of a Databricks metric view's dimensions and measures into
+``semantic_format=`` when the column has no ``S_LAYER_*`` tags, so a metric view written by
+hand gets one too. The tags still win where both are present. See
+:ref:`howto-models-metadata` for what maps.
+
 **DuckDB 2.0.** The ``duckdb`` extra now pins DuckDB 2.0.0, which installs version 0.16.0
 or later of the ``semantic_views`` extension, so time grains run on DuckDB.
 ``semantic_views`` 0.16.0 keeps DuckDB's own result types, which changes one you may rely

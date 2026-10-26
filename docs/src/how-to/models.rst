@@ -504,7 +504,7 @@ Where the warehouse holds them
      - the column's ``comment``
      - ``display_name``
      - ``synonyms``
-     - the ``S_LAYER_KIND`` and ``S_LAYER_SPEC`` column tags
+     - the ``S_LAYER_KIND`` and ``S_LAYER_SPEC`` column tags, else the native ``format``
    * - DuckDB
      - the member's ``COMMENT``
      - (not read)
@@ -524,6 +524,17 @@ codegen connects as has to be allowed to read the tags: on Snowflake it calls
 the catalog's ``information_schema.column_tags``. If the warehouse refuses the tag lookup,
 introspection raises :py:exc:`~semolina.exceptions.SemolinaIntrospectionError` saying so,
 rather than reporting the view as missing.
+
+A Databricks metric view written by hand has no ``S_LAYER_*`` tags, so a column without
+them gets its ``semantic_format`` from the ``format`` in the view's YAML instead. The
+format type gives the kind: ``number``, ``currency`` (with its ``currency_code``),
+``percentage``, ``byte`` (``bytes``), ``date`` and ``date_time`` (``datetime``). Its
+options give the display hints that have a slot: ``decimal_places`` of type ``exact`` or
+``max``, ``abbreviation`` (``compact`` is ``compact: auto``), ``hide_group_separator`` and
+``date_format``. ``scientific``, ``leading_zeros`` and ``time_format`` have no slot and
+aren't read. A numeric format on a dimension, or a date format on a measure, has no
+S-LAYER kind, so that column gets no ``semantic_format``. When a column has both, the tags
+win, because they hold more than ``format`` can (a ``count`` rather than a ``number``, say).
 
 Semolina reads no ``S_LAYER_*`` tags on DuckDB, so a model generated from a DuckDB view
 never gets a ``label=`` or ``semantic_format=``. You can add them by hand.

@@ -167,6 +167,32 @@ def test_databricks_introspect_reads_s_layer_column_tags(databricks_engine: Any)
     assert by_name["region"].semantic_format is None
 
 
+def test_databricks_introspect_reads_the_native_format(databricks_engine: Any) -> None:
+    """Native YAML ``format`` blocks, with no ``S_LAYER`` tags, make the semantic formats."""
+    from s_layer_semantic_formats import validate_block
+
+    by_name = {f.name: f for f in databricks_engine.introspect("formatted_view").fields}
+
+    assert by_name["ordered_on"].semantic_format == validate_block(
+        {"value": {"kind": "date"}, "display": {"date_style": "iso"}}, "dimension"
+    )
+    assert by_name["ordered_at"].semantic_format == validate_block(
+        {"value": {"kind": "datetime"}, "display": {"date_style": "medium"}}, "dimension"
+    )
+    assert by_name["revenue"].semantic_format == validate_block(
+        {
+            "value": {"kind": "currency", "currency": "EUR"},
+            "display": {"decimals": [2, 2], "compact": "auto"},
+        },
+        "metric",
+    )
+    assert by_name["order_count"].semantic_format == validate_block(
+        {"value": {"kind": "number"}, "display": {"decimals": [0, 0], "grouping": False}},
+        "metric",
+    )
+    assert by_name["plain_total"].semantic_format is None
+
+
 def test_snowflake_introspect_reads_s_layer_member_tags(snowflake_engine: Any) -> None:
     """``S_LAYER_*`` from ``TAG_REFERENCES``, a derived metric included."""
     from _recording import TAGGED_REVENUE_SPEC

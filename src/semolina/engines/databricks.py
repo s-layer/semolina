@@ -117,6 +117,7 @@ def _introspect_databricks(cursor: Any, view_name: str, *, described: str) -> In
     import json
 
     from semolina.codegen.introspector import (
+        semantic_format_from_databricks_format,
         semantic_format_from_tags,
         with_python_field_names,
     )
@@ -168,6 +169,11 @@ def _introspect_databricks(cursor: Any, view_name: str, *, described: str) -> In
                 synonyms=tuple(str(s) for s in synonyms) if isinstance(synonyms, list) else (),
                 semantic_format=semantic_format_from_tags(
                     original_col_name, tags.get(original_col_name, {}), field_type
+                )
+                or semantic_format_from_databricks_format(
+                    original_col_name,
+                    metadata.get("format") if isinstance(metadata, dict) else None,
+                    field_type,
                 ),
             )
         )
@@ -267,6 +273,10 @@ class DatabricksEngine(Engine):
         metric views expose only dimensions and measures). The ``type.name`` is
         mapped to a Python annotation string; types without a clean mapping
         produce a ``"TODO: ..."`` placeholder so generated code stays valid.
+
+        A column's ``semantic_format`` comes from its ``S_LAYER_KIND`` and ``S_LAYER_SPEC``
+        column tags when it has them, and otherwise from the native ``format`` in its
+        metadata, so a metric view written by hand gets one too.
 
         Args:
             view_name: Databricks metric view identifier to introspect.
