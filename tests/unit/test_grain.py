@@ -218,12 +218,30 @@ class TestSQL:
             ("year", "CAST(DATE_TRUNC('year', `ordered_at`) AS DATE)"),
             ("week", "CAST(DATE_TRUNC('week', `ordered_at`) AS DATE)"),
             ("day", "CAST(DATE_TRUNC('day', `ordered_at`) AS DATE)"),
-            ("hour", "DATE_TRUNC('hour', `ordered_at`)"),
-            ("second", "DATE_TRUNC('second', `ordered_at`)"),
+            (
+                "hour",
+                "(`ordered_at` - MAKE_DT_INTERVAL(0, 0, EXTRACT(MINUTE FROM `ordered_at`), "
+                "EXTRACT(SECOND FROM `ordered_at`)))",
+            ),
+            (
+                "minute",
+                "(`ordered_at` - MAKE_DT_INTERVAL(0, 0, 0, EXTRACT(SECOND FROM `ordered_at`)))",
+            ),
+            (
+                "second",
+                "(`ordered_at` - MAKE_DT_INTERVAL(0, 0, 0, "
+                "MOD(EXTRACT(SECOND FROM `ordered_at`), 1)))",
+            ),
         ],
     )
     def test_databricks(self, unit: str, expression: str):
-        """Databricks: ``DATE_TRUNC`` weeks start on Monday; day and coarser cast to DATE."""
+        """
+        Databricks: ``DATE_TRUNC`` weeks start on Monday; day and coarser cast to DATE.
+
+        Finer grains subtract the part below the grain instead of calling ``DATE_TRUNC``,
+        which returns a ``TIMESTAMP`` even for a ``TIMESTAMP_NTZ`` column and so would turn
+        a naive value into one in the session time zone.
+        """
         grained = Orders.ordered_at.grain(unit)  # pyright: ignore[reportArgumentType]
         assert _sql("databricks", grained) == (
             f"SELECT MEASURE(`revenue`) AS `revenue`, {expression} AS `ordered_at__{unit}`\n"
