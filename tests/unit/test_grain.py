@@ -149,6 +149,27 @@ class TestGrain:
             Orders.query().dimensions(Other.ordered_at.grain("day"))
 
 
+class TestGrainKeepsMetadata:
+    """A truncated dimension describes the same thing as its base, so it carries its metadata."""
+
+    def test_label_description_synonyms_and_format_carry_over(self) -> None:
+        class Annotated(SemanticView, view="annotated"):
+            ordered_at = Dimension[datetime.datetime](
+                label="Ordered at",
+                description="When the order was placed",
+                synonyms=("order date",),
+                semantic_format={"value": {"kind": "datetime"}},
+            )
+
+        base = Annotated.ordered_at
+        grained = base.grain("month")
+
+        assert grained.label == "Ordered at"
+        assert grained.description == "When the order was placed"
+        assert grained.synonyms == ("order date",)
+        assert grained.semantic_format == base.semantic_format
+
+
 class TestNoFilters:
     """A grain cannot be filtered; its base can."""
 

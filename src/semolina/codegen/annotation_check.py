@@ -22,6 +22,11 @@ assurance (threat T-48-24). Every row carries ``execute-schema``, ``zero-row`` o
 and a status — nothing else. The probe fetches no rows by construction, so no value is even
 in scope (threat T-48-22).
 
+**Metadata drifts too.** A field's ``description=``, ``label=`` and ``synonyms=`` are
+compared against what the engine introspects (``Engine.introspected_metadata``), as is the
+class's ``description=`` against the view's comment. A mismatch is drift, not a merge: the
+warehouse is what the model was generated from, so the committed copy is the stale one.
+
 The generation path is deliberately untouched by all of this: ``semolina codegen`` still
 builds models from warehouse metadata. Making generation probe-primary needs a canonical
 query builder, an offline fallback chain and route recording in emitted source; that is
@@ -34,7 +39,7 @@ two routes still disagree — Phase 47's central finding, surfaced rather than s
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from semolina.codegen.arrow_map import arrow_type_to_python
 from semolina.codegen.probe import probe_schema
@@ -120,7 +125,8 @@ class FieldCheckRow:
             :data:`ROUTE_METADATA`.
         status: :data:`STATUS_MATCH` or :data:`STATUS_DRIFT`.
         detail: Why the row drifted for a reason the two annotation columns cannot show
-            — a changed role or a stale ``source=``. Empty string when the annotations
+            — a changed role, a stale ``source=``, or metadata (description, label,
+            synonyms) that no longer matches the warehouse's. Empty string when the annotations
             are the whole story, which is the usual case. Kept out of the table's five
             columns so the report stays readable; the CLI prints the non-empty ones
             underneath it.
@@ -146,12 +152,15 @@ class ViewCheckReport:
         has_drift: True when any row drifted.
         probe_error: The reason the probe was unavailable, when it was. None on a probed
             run. Carried so the CLI can say *why* it fell back rather than only that it did.
+        detail: Drift in the view's own metadata (its description), which no field row can
+            show. Empty when there is none; when there is, ``has_drift`` is True.
     """
 
     view_name: str
     rows: list[FieldCheckRow]
     has_drift: bool
     probe_error: str | None = None
+    detail: str = ""
 
 
 def _canonical_model(view: IntrospectedView) -> Any:
@@ -349,6 +358,75 @@ def _non_annotation_drift(
         reasons.append(f"column: committed {committed_column!r}, warehouse {warehouse_column!r}")
 
     return "; ".join(reasons)
+
+
+def _metadata_drift(
+    compared: frozenset[str], field: IntrospectedField, committed_field: CommittedField
+) -> str:
+    """
+    Describe how a committed field's metadata arguments differ from the warehouse's.
+
+    Only the attributes the engine reads are compared (``Engine.introspected_metadata``): a
+    backend with no slot for a label reports none, and a committed ``label=`` is then not
+    drift but something the warehouse cannot hold. A metadata argument the declaration
+    leaves out reads as empty, which is what the warehouse reports for a member without one;
+    one the reader could not evaluate (``CommittedField.unreadable``, already warned about)
+    is not compared. Synonyms compare as a set, since their order carries no meaning.
+
+    Args:
+        compared: The metadata attribute names the engine introspects.
+        field: The introspected field.
+        committed_field: The parsed committed declaration.
+
+    Returns:
+        A human-readable description, or the empty string when nothing differs.
+    """
+    reasons: list[str] = []
+    metadata = committed_field.metadata
+    compared = compared - committed_field.unreadable
+    if "description" in compared:
+        committed = metadata.get("description") or ""
+        if committed != field.description:
+            reasons.append(f"description: committed {committed!r}, warehouse {field.description!r}")
+    if "label" in compared:
+        committed_label = metadata.get("label")
+        if committed_label != field.label:
+            reasons.append(f"label: committed {committed_label!r}, warehouse {field.label!r}")
+    if "synonyms" in compared:
+        committed_synonyms = metadata.get("synonyms", ())
+        if not isinstance(committed_synonyms, tuple) or set(
+            cast("tuple[object, ...]", committed_synonyms)
+        ) != set(field.synonyms):
+            reasons.append(
+                f"synonyms: committed {committed_synonyms!r}, warehouse {field.synonyms!r}"
+            )
+    return "; ".join(reasons)
+
+
+def _view_metadata_drift(
+    compared: frozenset[str], view: IntrospectedView, committed: CommittedModel | None
+) -> str:
+    """
+    Describe how a committed class's ``description=`` differs from the view's comment.
+
+    A ``description=`` the reader could not evaluate (already warned about) is not
+    compared.
+
+    Args:
+        compared: The metadata attribute names the engine introspects.
+        view: The introspected view.
+        committed: The parsed committed model, or None when the file declares no class for
+            the view (the field rows already report that).
+
+    Returns:
+        A human-readable description, or the empty string when nothing differs.
+    """
+    if committed is None or "description" not in compared - committed.unreadable:
+        return ""
+    committed_description = committed.description or ""
+    if committed_description == view.description:
+        return ""
+    return f"description: committed {committed_description!r}, warehouse {view.description!r}"
 
 
 def _metadata_annotation(field: IntrospectedField) -> str:
@@ -554,7 +632,14 @@ def check_view(engine: Engine, view_name: str, committed: CommittedModel | None)
         model_detail = (
             ""
             if committed_field is None
-            else _non_annotation_drift(engine.dialect, field, committed_field)
+            else "; ".join(
+                d
+                for d in (
+                    _non_annotation_drift(engine.dialect, field, committed_field),
+                    _metadata_drift(engine.introspected_metadata, field, committed_field),
+                )
+                if d
+            )
         )
         rename_detail = (
             f"declared as {renamed[field.name]!r}, which reads the same column"
@@ -595,9 +680,11 @@ def check_view(engine: Engine, view_name: str, committed: CommittedModel | None)
             )
         )
 
+    view_detail = _view_metadata_drift(engine.introspected_metadata, view, committed)
     return ViewCheckReport(
         view_name=view_name,
         rows=rows,
-        has_drift=any(row.status == STATUS_DRIFT for row in rows),
+        has_drift=bool(view_detail) or any(row.status == STATUS_DRIFT for row in rows),
         probe_error=probe_error or None,
+        detail=view_detail,
     )

@@ -763,6 +763,8 @@ def _render_check_report(report: ViewCheckReport, class_name: str | None = None)
     # Drift the two annotation columns cannot show — a changed role, a stale `source=` —
     # printed under the table rather than as a sixth column, which would push the
     # annotations into wrapping on a normal terminal for the sake of a usually-empty cell.
+    if report.detail:
+        _stderr.print(_labelled("Detail:", "yellow", f" (view): {report.detail}"))
     for row in report.rows:
         if row.detail:
             _stderr.print(_labelled("Detail:", "yellow", f" {row.name}: {row.detail}"))

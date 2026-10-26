@@ -1115,3 +1115,87 @@ class V(SemanticView, view="v"):
     country = Dimension[str]()
 """
         assert list(read_committed_model(_write(tmp_path, source))[0].fields) == ["country"]
+
+
+class TestMetadataArgumentsAreRead:
+    """``label=``, ``description=``, ``synonyms=`` and ``semantic_format=``, as literals."""
+
+    SOURCE = """\
+from semolina import Dimension, Metric, SemanticView
+
+LABEL = "Gross revenue"
+
+
+class V(SemanticView, view="v", description="Sales by country"):
+    revenue = Metric[float | None](
+        label=LABEL,
+        description="Revenue before refunds",
+        synonyms=["sales", "turnover"],
+        semantic_format={"value": {"kind": "currency", "currency": "USD"}},
+    )
+    country = Dimension[str]()
+"""
+
+    def test_each_argument_is_read_by_value(self, tmp_path: Path) -> None:
+        model = read_committed_model(_write(tmp_path, self.SOURCE))[0]
+
+        assert model.fields["revenue"].metadata == {
+            "label": "Gross revenue",
+            "description": "Revenue before refunds",
+            "synonyms": ("sales", "turnover"),
+            "semantic_format": {"value": {"kind": "currency", "currency": "USD"}},
+        }
+        assert model.fields["country"].metadata == {}
+
+    def test_the_class_description_is_read(self, tmp_path: Path) -> None:
+        assert read_committed_model(_write(tmp_path, self.SOURCE))[0].description == (
+            "Sales by country"
+        )
+
+    def test_an_attribute_docstring_is_not_read_as_the_description(self, tmp_path: Path) -> None:
+        """A docstring is documentation you wrote; only ``description=`` is compared."""
+        source = '''\
+from semolina import Dimension, Metric, SemanticView
+
+
+class V(SemanticView, view="v"):
+    revenue = Metric[float | None]()
+    """Revenue in cents; see the finance wiki."""
+    country = Dimension[str]()
+'''
+        model = read_committed_model(_write(tmp_path, source))[0]
+
+        assert model.fields["revenue"].metadata == {}
+
+    def test_a_set_of_synonyms_reads_as_a_tuple(self, tmp_path: Path) -> None:
+        """``Field`` takes any iterable of strings, so a set literal is a valid spelling."""
+        source = """\
+from semolina import Dimension, SemanticView
+
+
+class V(SemanticView, view="v"):
+    country = Dimension[str](synonyms={"nation"})
+"""
+        field = read_committed_model(_write(tmp_path, source))[0].fields["country"]
+
+        assert field.metadata == {"synonyms": ("nation",)}
+
+    def test_an_unevaluable_argument_is_warned_about_not_compared(self, tmp_path: Path) -> None:
+        source = """\
+from semolina import Metric, SemanticView
+
+
+class V(SemanticView, view="v", description=make_description()):
+    revenue = Metric[float | None](label=make_label())
+"""
+        read = read_committed_model_file(_write(tmp_path, source))
+        model = read.models[0]
+
+        assert model.fields["revenue"].metadata == {}
+        assert model.fields["revenue"].unreadable == frozenset({"label"})
+        assert model.description is None
+        assert model.unreadable == frozenset({"description"})
+        assert any("label=" in w and "not compared" in w for w in read.warnings), read.warnings
+        assert any("description=" in w and "not compared" in w for w in read.warnings), (
+            read.warnings
+        )

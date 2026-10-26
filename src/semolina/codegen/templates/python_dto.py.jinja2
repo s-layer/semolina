@@ -3,7 +3,7 @@
    value here: the generated file is Python the user imports, so a value that closes its own
    literal executes at import time. A Snowflake metric's result column is literally
    `AGG("REVENUE")` — a double quote, in the one string this template writes most of. See
-   `_python_str_literal` and `_docstring_body` in `python_renderer.py`.
+   `_python_str_literal` in `python_renderer.py` and `_docstring_body` in `dto_renderer.py`.
 
    `model.class_name` is the exception, and it is the one interpolation below that is not a
    string literal: it is a bare token, so there is nothing to quote it into and no escaper

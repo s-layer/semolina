@@ -120,9 +120,15 @@ class SemanticView(metaclass=SemanticViewMeta):
     _frozen: ClassVar[bool] = False
     _abstract: ClassVar[bool] = True
     """True for a model that names no view. Set on every subclass, so it is never inherited."""
+    _description: ClassVar[str | None] = None
+    """The view's description, from ``description=``. Set on every subclass, never inherited."""
 
     def __init_subclass__(
-        cls, view: str | None = None, abstract: bool = False, **kwargs: Any
+        cls,
+        view: str | None = None,
+        abstract: bool = False,
+        description: str | None = None,
+        **kwargs: Any,
     ) -> None:
         """
         Called when a class inherits from SemanticView.
@@ -133,6 +139,9 @@ class SemanticView(metaclass=SemanticViewMeta):
             view: The semantic view name. Required unless ``abstract`` is True.
             abstract: Declare a base that holds shared fields and names no view. It can be
                 subclassed and introspected, but not queried.
+            description: What the view holds, as the warehouse's view ``COMMENT`` says it.
+                Kept as ``_description``. A subclass does not inherit it, since it names a
+                view of its own.
             **kwargs: Additional keyword arguments for cooperative inheritance
 
         Raises:
@@ -187,6 +196,7 @@ class SemanticView(metaclass=SemanticViewMeta):
         if view is not None:
             cls._view_name = view
         cls._abstract = abstract
+        cls._description = description
         cls._fields = types.MappingProxyType(fields_dict)
         cls._frozen = True
 

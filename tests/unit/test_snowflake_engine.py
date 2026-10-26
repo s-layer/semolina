@@ -79,6 +79,7 @@ def _patch_connect(engine: Any, cursor: Any) -> Any:
 def _show_columns_cursor(
     rows: list[tuple[Any, ...]],
     session: tuple[str | None, str | None] = ("SESSION_DB", "SESSION_SCHEMA"),
+    describe_rows: list[tuple[Any, ...]] | None = None,
 ) -> MagicMock:
     """
     Build a mock ADBC cursor returning SHOW COLUMNS IN VIEW rows.
@@ -87,15 +88,38 @@ def _show_columns_cursor(
     comment) and ``.fetchall()`` returning the same row shape the existing
     Snowflake parser consumes. ``.fetchone()`` answers the
     ``SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()`` that qualifies a name given
-    with fewer than three parts.
+    with fewer than three parts. A ``DESCRIBE SEMANTIC VIEW`` switches the cursor to
+    that statement's five columns and ``describe_rows`` (none by default).
     """
     cursor = MagicMock(name="cursor")
-    cursor.description = [("column_name",), ("kind",), ("data_type",), ("comment",)]
-    cursor.fetchall.return_value = rows
+
+    def execute(sql: str) -> None:
+        if sql.startswith("DESCRIBE SEMANTIC VIEW"):
+            cursor.description = [
+                ("object_kind",),
+                ("object_name",),
+                ("parent_entity",),
+                ("property",),
+                ("property_value",),
+            ]
+            cursor.fetchall.return_value = describe_rows or []
+        else:
+            cursor.description = [("column_name",), ("kind",), ("data_type",), ("comment",)]
+            cursor.fetchall.return_value = rows
+
+    cursor.execute.side_effect = execute
     cursor.fetchone.return_value = session
     cursor.__enter__ = MagicMock(return_value=cursor)
     cursor.__exit__ = MagicMock(return_value=False)
     return cursor
+
+
+def _show_sql(cursor: MagicMock) -> str:
+    """Return the one SHOW COLUMNS statement the cursor ran."""
+    (statement,) = [
+        c[0][0] for c in cursor.execute.call_args_list if c[0][0].startswith("SHOW COLUMNS")
+    ]
+    return statement
 
 
 class TestSnowflakeEngineIntrospect:
@@ -232,6 +256,46 @@ class TestSnowflakeEngineIntrospect:
 
         assert result.fields[0].description == "Total revenue"
 
+    def test_introspect_reads_synonyms_and_the_view_comment(self) -> None:
+        """
+        ``DESCRIBE SEMANTIC VIEW`` adds what ``SHOW COLUMNS`` lacks: synonyms, view comment.
+
+        Members are matched by their stored name, so a member that exists on two logical
+        tables, or one whose Python name differs from its column, still gets its own.
+        """
+        cursor = _show_columns_cursor(
+            [
+                ("REVENUE", "METRIC", json.dumps({"type": "FIXED", "scale": 0}), "Gross"),
+                ("country", "DIMENSION", json.dumps({"type": "TEXT"}), ""),
+                ("REGION", "DIMENSION", json.dumps({"type": "TEXT"}), ""),
+            ],
+            describe_rows=[
+                (None, None, None, "COMMENT", "Sales by country"),
+                ("TABLE", "SALES_DATA", None, "BASE_TABLE_NAME", "SALES_DATA"),
+                ("METRIC", "REVENUE", "SALES_DATA", "COMMENT", "Gross"),
+                ("METRIC", "REVENUE", "SALES_DATA", "SYNONYMS", '["sales","turnover"]'),
+                ("DIMENSION", "country", "SALES_DATA", "SYNONYMS", '["nation"]'),
+            ],
+        )
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor):
+            view = engine.introspect("sales_view")
+
+        assert view.description == "Sales by country"
+        synonyms = {f.name: f.synonyms for f in view.fields}
+        assert synonyms == {"revenue": ("sales", "turnover"), "country": ("nation",), "region": ()}
+        assert view.fields[0].description == "Gross"
+
+    def test_introspect_refuses_synonyms_that_are_not_a_json_list(self) -> None:
+        """A shape this reader does not know is an error, not a guess."""
+        cursor = _show_columns_cursor(
+            [("COUNTRY", "DIMENSION", json.dumps({"type": "TEXT"}), "")],
+            describe_rows=[("DIMENSION", "COUNTRY", "T", "SYNONYMS", "nation, land")],
+        )
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor), pytest.raises(Exception, match="SYNONYMS"):
+            engine.introspect("sales_view")
+
     def test_introspect_executes_correct_sql(self) -> None:
         """Should execute SHOW COLUMNS IN VIEW on the quoted, folded name via the cursor."""
         cursor = _show_columns_cursor([])
@@ -239,7 +303,7 @@ class TestSnowflakeEngineIntrospect:
         with _patch_connect(engine, cursor):
             engine.introspect("my_sales_view")
 
-        executed_sql = cursor.execute.call_args[0][0]
+        executed_sql = _show_sql(cursor)
         assert "SHOW COLUMNS IN VIEW" in executed_sql
         assert executed_sql.endswith('."MY_SALES_VIEW"')
 
@@ -256,7 +320,7 @@ class TestSnowflakeEngineIntrospect:
         with _patch_connect(engine, cursor):
             engine.introspect("my_sales_view")
 
-        executed_sql = cursor.execute.call_args[0][0]
+        executed_sql = _show_sql(cursor)
         assert "SHOW COLUMNS IN VIEW" in executed_sql
         assert "IN SEMANTIC VIEW" not in executed_sql
         assert executed_sql.endswith('."MY_SALES_VIEW"')
@@ -299,6 +363,7 @@ class TestSnowflakeEngineIntrospect:
         assert executed == [
             "SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()",
             'SHOW COLUMNS IN VIEW "SESSION_DB"."SESSION_SCHEMA"."SEM_ORDERS"',
+            'DESCRIBE SEMANTIC VIEW "SESSION_DB"."SESSION_SCHEMA"."SEM_ORDERS"',
         ]
 
     def test_introspect_qualifies_a_two_part_name_with_the_session_database(self) -> None:
@@ -308,7 +373,7 @@ class TestSnowflakeEngineIntrospect:
         with _patch_connect(engine, cursor):
             engine.introspect("dev.sem_orders")
 
-        executed_sql = cursor.execute.call_args[0][0]
+        executed_sql = _show_sql(cursor)
         assert executed_sql == 'SHOW COLUMNS IN VIEW "SESSION_DB"."DEV"."SEM_ORDERS"'
 
     def test_introspect_quotes_the_session_parts_it_fills_in(self) -> None:
@@ -324,7 +389,7 @@ class TestSnowflakeEngineIntrospect:
         with _patch_connect(engine, cursor):
             engine.introspect("sem_orders")
 
-        executed_sql = cursor.execute.call_args[0][0]
+        executed_sql = _show_sql(cursor)
         assert executed_sql == 'SHOW COLUMNS IN VIEW "my_db"."analytics-prod"."SEM_ORDERS"'
 
     def test_introspect_three_part_name_used_as_is(self) -> None:
@@ -335,7 +400,10 @@ class TestSnowflakeEngineIntrospect:
             engine.introspect("OTHER_DB.dev.sem_orders")
 
         executed = [c[0][0] for c in cursor.execute.call_args_list]
-        assert executed == ['SHOW COLUMNS IN VIEW "OTHER_DB"."DEV"."SEM_ORDERS"']
+        assert executed == [
+            'SHOW COLUMNS IN VIEW "OTHER_DB"."DEV"."SEM_ORDERS"',
+            'DESCRIBE SEMANTIC VIEW "OTHER_DB"."DEV"."SEM_ORDERS"',
+        ]
 
     def test_introspect_keeps_the_default_schema_shorthand(self) -> None:
         """
@@ -350,7 +418,10 @@ class TestSnowflakeEngineIntrospect:
             engine.introspect("my_db..sem_orders")
 
         executed = [c[0][0] for c in cursor.execute.call_args_list]
-        assert executed == ['SHOW COLUMNS IN VIEW "MY_DB".."SEM_ORDERS"']
+        assert executed == [
+            'SHOW COLUMNS IN VIEW "MY_DB".."SEM_ORDERS"',
+            'DESCRIBE SEMANTIC VIEW "MY_DB".."SEM_ORDERS"',
+        ]
 
     def test_introspect_quotes_a_name_that_needs_it(self) -> None:
         """
@@ -364,7 +435,7 @@ class TestSnowflakeEngineIntrospect:
         with _patch_connect(engine, cursor):
             engine.introspect('dev."Order Book"')
 
-        executed_sql = cursor.execute.call_args[0][0]
+        executed_sql = _show_sql(cursor)
         assert executed_sql == 'SHOW COLUMNS IN VIEW "my_db"."DEV"."Order Book"'
 
     @pytest.mark.parametrize("session", [(None, None), ("SESSION_DB", None)])

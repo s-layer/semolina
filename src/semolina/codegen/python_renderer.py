@@ -13,12 +13,12 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from semolina.exceptions import SemolinaGeneratedSourceError
 
 if TYPE_CHECKING:
-    from semolina.introspection import IntrospectedView
+    from semolina.introspection import IntrospectedField, IntrospectedView
 
 __all__ = [
     "GeneratedSourceError",
@@ -33,6 +33,9 @@ __all__ = [
 
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
+
+_ARG_INDENT = " " * 8
+"""How far a generated field's keyword arguments are indented: two levels in."""
 
 
 GeneratedSourceError = SemolinaGeneratedSourceError
@@ -149,28 +152,76 @@ def _python_str_literal(value: str) -> str:
     return literal
 
 
-def _docstring_body(text: str) -> str:
-    r"""
-    Escape text for the inside of a triple-double-quoted Python string.
+def _json_literal(value: object, indent: str) -> str:
+    """
+    Write JSON data as a Python literal, laid out as ``ruff format`` would leave it.
 
-    ``repr`` is used for every other interpolated string, but not here: it would collapse a
-    multi-line column comment onto one line with ``\n`` escapes, and a field docstring is
-    something the user reads. Keeping the triple-quoted form means escaping only the two
-    characters that can end it early -- a backslash, and a quote that could complete the
-    closing delimiter.
-
-    Every ``"`` is escaped rather than only the runs that would actually terminate the
-    literal. A rule that has to reason about run lengths and trailing positions is a rule
-    that gets an edge case wrong; ``""`` immediately before the closing delimiter is enough
-    to break it, and so is a lone trailing ``"``.
+    A dict goes one key per line with a trailing comma, which ruff keeps expanded; a list
+    of scalars stays on one line. Strings go through :func:`_python_str_literal`.
 
     Args:
-        text: The raw description.
+        value: JSON data: a dict, list, string, number, boolean or None.
+        indent: The indentation of the line the literal starts on.
 
     Returns:
-        The body to place between the triple-quote delimiters.
+        The literal.
+
+    Raises:
+        TypeError: If ``value`` holds something that is not JSON data.
     """
-    return text.replace("\\", "\\\\").replace('"', '\\"')
+    if isinstance(value, dict):
+        inner = indent + "    "
+        items = "".join(
+            f"\n{inner}{_python_str_literal(str(key))}: {_json_literal(item, inner)},"
+            for key, item in cast("dict[object, object]", value).items()
+        )
+        return f"{{{items}\n{indent}}}"
+    if isinstance(value, list):
+        items = ", ".join(_json_literal(item, indent) for item in cast("list[object]", value))
+        return f"[{items}]"
+    if isinstance(value, str):
+        return _python_str_literal(value)
+    if value is None or isinstance(value, bool | int | float):
+        return repr(value)
+    msg = f"not JSON data: {value!r}"
+    raise TypeError(msg)
+
+
+def _call_args(field: IntrospectedField) -> str:
+    """
+    Render a field constructor's arguments: ``source=`` and the field's metadata.
+
+    A field with no metadata keeps the one-line form (``Metric[int]()``, or with a lone
+    ``source=``), so a view without comments renders exactly as it always has. Anything
+    more goes one keyword per line, in a fixed order, so a regenerated file diffs cleanly.
+
+    Every string goes through :func:`_python_str_literal`. The ``semantic_format`` is
+    written in the block's normal form by :func:`_json_literal`, so it reads back to an
+    equal block.
+
+    Args:
+        field: The introspected field.
+
+    Returns:
+        The text between the constructor's parentheses.
+    """
+    keywords: list[str] = []
+    if field.source_name is not None:
+        keywords.append(f"source={_python_str_literal(field.source_name)}")
+    if field.label:
+        keywords.append(f"label={_python_str_literal(field.label)}")
+    if field.description:
+        keywords.append(f"description={_python_str_literal(field.description)}")
+    if field.synonyms:
+        items = ", ".join(_python_str_literal(s) for s in field.synonyms)
+        trailing = "," if len(field.synonyms) == 1 else ""
+        keywords.append(f"synonyms=({items}{trailing})")
+    if field.semantic_format is not None:
+        literal = _json_literal(field.semantic_format.normal_form(), _ARG_INDENT)
+        keywords.append(f"semantic_format={literal}")
+    if not keywords or (len(keywords) == 1 and field.source_name is not None):
+        return ", ".join(keywords)
+    return "".join(f"\n{_ARG_INDENT}{keyword}," for keyword in keywords) + "\n    "
 
 
 @dataclass
@@ -181,27 +232,22 @@ class _FieldContext:
     Attributes:
         name: Python attribute name for the field.
         field_class: Semolina class name: 'Metric', 'Fact', or 'Dimension'.
-        docstring_body: Field description, escaped for the inside of a
-            triple-quoted literal by :func:`_docstring_body`. Empty string if none.
+        call_args: Everything between the field constructor's parentheses, already
+            rendered by :func:`_call_args`: empty, a lone ``source=``, or one keyword per
+            line for a field that carries metadata.
         type_comment: Text of the ``#`` comment emitted above the field, already
             collapsed to a single line. Either the ``TODO: <raw>`` text for an
             unmapped type or the bare warehouse type for an annotation that does
             not name it. Empty string when the field earns no comment.
         data_type: Python type string for the Generic subscript (e.g., 'int',
             'str', 'datetime.date', 'Any'). Never empty.
-        source_literal: The original warehouse column name as a ready-quoted Python
-            string literal, when it differs from the Pythonic field name. Emitted as
-            ``source=<literal>`` in the generated field constructor. None when not
-            needed. Pre-quoted rather than raw so the template never interpolates an
-            unescaped warehouse string into source.
     """
 
     name: str
     field_class: str
-    docstring_body: str
+    call_args: str
     type_comment: str
     data_type: str
-    source_literal: str | None
 
 
 @dataclass
@@ -211,13 +257,16 @@ class _ModelContext:
 
     Attributes:
         class_name: PascalCase Python class name.
-        view_literal: The warehouse view name as a ready-quoted Python string literal,
-            for the same reason as ``_FieldContext.source_literal``.
+        view_literal: The warehouse view name as a ready-quoted Python string literal, so
+            the template never interpolates an unescaped warehouse string into source.
+        description_literal: The view's comment as a ready-quoted literal, or None when it
+            has none.
         fields: Ordered list of field rendering contexts.
     """
 
     class_name: str
     view_literal: str
+    description_literal: str | None
     fields: list[_FieldContext]
 
 
@@ -346,17 +395,15 @@ def _build_model_context(view: IntrospectedView) -> _ModelContext:
             _FieldContext(
                 name=f.name,
                 field_class=field_class,
-                docstring_body=_docstring_body(f.description),
+                call_args=_call_args(f),
                 type_comment=type_comment,
                 data_type=data_type_str,
-                source_literal=(
-                    _python_str_literal(f.source_name) if f.source_name is not None else None
-                ),
             )
         )
     return _ModelContext(
         class_name=view.class_name,
         view_literal=_python_str_literal(view.view_name),
+        description_literal=(_python_str_literal(view.description) if view.description else None),
         fields=fields,
     )
 

@@ -1,5 +1,5 @@
 {# Every warehouse-supplied string arrives here already quoted (`view_literal`,
-   `source_literal`) or already escaped (`docstring_body`). Do not interpolate a raw
+   `description_literal`, and every literal inside `call_args`). Do not interpolate a raw
    catalogue value into this template: the generated file is Python the user imports, so a
    value that closes its own literal executes at import time. See `_python_str_literal`. #}
 {% for line in import_lines %}
@@ -8,18 +8,19 @@
 {% for model in models %}
 
 
+{% if model.description_literal %}
+class {{ model.class_name }}(
+    SemanticView,
+    view={{ model.view_literal }},
+    description={{ model.description_literal }},
+):
+{% else %}
 class {{ model.class_name }}(SemanticView, view={{ model.view_literal }}):
+{% endif %}
 {% for field in model.fields %}
 {% if field.type_comment %}
     # {{ field.type_comment }}
 {% endif %}
-{% if field.source_literal %}
-    {{ field.name }} = {{ field.field_class }}[{{ field.data_type }}](source={{ field.source_literal }})
-{% else %}
-    {{ field.name }} = {{ field.field_class }}[{{ field.data_type }}]()
-{% endif %}
-{% if field.docstring_body %}
-    """{{ field.docstring_body }}"""
-{% endif %}
+    {{ field.name }} = {{ field.field_class }}[{{ field.data_type }}]({{ field.call_args }})
 {% endfor %}
 {% endfor %}

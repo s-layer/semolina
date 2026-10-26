@@ -144,6 +144,60 @@ class TestDuckDBEngineIntrospect:
         assert result.class_name == "Orders"
 
 
+@pytest.fixture
+def annotated_engine() -> Iterator[Any]:
+    """A DuckDB engine with one view carrying view, member and synonym annotations."""
+    from adbc_poolhouse import DuckDBConfig, close_pool
+
+    from semolina.config import create_engine
+
+    engine = create_engine(DuckDBConfig(database=":memory:", pool_size=1))
+    with engine.connect() as conn:
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE sales_data (id INTEGER, country VARCHAR, amount DOUBLE)")
+        cur.execute(
+            """
+            CREATE SEMANTIC VIEW annotated COMMENT = 'Sales by country' AS
+            TABLES (s AS sales_data PRIMARY KEY (id))
+            DIMENSIONS (
+                s.country AS s.country WITH SYNONYMS = ('nation', 'land'),
+                s.plain AS s.country
+            )
+            METRICS (
+                s.revenue AS SUM(s.amount)
+                    COMMENT = 'Gross revenue'
+                    WITH SYNONYMS = ('sales')
+            )
+            """
+        )
+        cur.close()
+        conn.commit()
+    try:
+        yield engine
+    finally:
+        close_pool(engine._pool)
+
+
+class TestDuckDBIntrospectAnnotations:
+    """``DESCRIBE SEMANTIC VIEW``'s COMMENT and SYNONYMS rows, at view and member level."""
+
+    def test_view_comment(self, annotated_engine: Any) -> None:
+        """The row with no object kind or name is the view's own."""
+        assert annotated_engine.introspect("annotated").description == "Sales by country"
+
+    def test_member_comments_and_synonyms(self, annotated_engine: Any) -> None:
+        """Synonyms keep their declared order; a member without any has none."""
+        fields = {f.name: f for f in annotated_engine.introspect("annotated").fields}
+        assert fields["revenue"].description == "Gross revenue"
+        assert fields["revenue"].synonyms == ("sales",)
+        assert fields["country"].synonyms == ("nation", "land")
+        assert fields["plain"].synonyms == ()
+
+    def test_a_view_without_a_comment(self, duckdb_engine: Any) -> None:
+        """No view-level row, an empty description."""
+        assert duckdb_engine.introspect("orders").description == ""
+
+
 class TestDuckDBIntrospectNamesTheViewItWasGiven:
     """
     ``introspect()`` describes the view its name names: schema and quoting included (FILT-05).

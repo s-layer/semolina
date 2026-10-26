@@ -6,10 +6,11 @@ Converts IntrospectedView objects into formatted, importable Python source.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from s_layer_semantic_formats import validate_block
 
 from semolina.codegen.introspector import IntrospectedField, IntrospectedView
 
@@ -71,8 +72,12 @@ class TestRenderViews:
         source = render_views([view])
         assert "unit_price = Fact[float]()" in source
 
-    def test_field_with_description_emits_docstring(self) -> None:
-        """Field with description emits a docstring below the assignment."""
+    def test_field_with_description_emits_the_description_argument(self) -> None:
+        """
+        A description becomes ``description=``, so the model carries it at runtime.
+
+        It used to be an attribute docstring, which only a reader of the source could see.
+        """
         from semolina.codegen.python_renderer import render_views
 
         view = IntrospectedView(
@@ -88,8 +93,13 @@ class TestRenderViews:
             ],
         )
         source = render_views([view])
-        assert "revenue = Metric[int | None]()" in source
-        assert '"""Total revenue"""' in source
+        assert (
+            '    revenue = Metric[int | None](\n        description="Total revenue",\n    )\n'
+        ) in source
+        assert '"""' not in source
+        namespace: dict[str, object] = {}
+        exec(compile(source, "<generated>", "exec"), namespace)  # noqa: S102
+        assert namespace["SalesView"].revenue.description == "Total revenue"  # pyright: ignore[reportAttributeAccessIssue]
 
     def test_field_without_description_no_docstring(self) -> None:
         """Field without description emits no docstring."""
@@ -391,6 +401,134 @@ class TestRenderViews:
         assert "import datetime" in source
         # Only one import datetime line
         assert source.count("import datetime") == 1
+
+
+def _exec(source: str) -> dict[str, Any]:
+    """Run generated source and return its namespace."""
+    namespace: dict[str, Any] = {}
+    exec(compile(source, "<generated>", "exec"), namespace)  # noqa: S102
+    return namespace
+
+
+class TestFieldMetadata:
+    """Label, synonyms and semantic format are written as arguments the model keeps."""
+
+    _FORMAT = validate_block(
+        {
+            "value": {"kind": "currency", "currency": "USD"},
+            "display": {"decimals": {"min": 0, "max": 2}, "compact": "auto"},
+        },
+        "metric",
+    )
+
+    def _view(self, **metadata: Any) -> IntrospectedView:
+        return IntrospectedView(
+            view_name="sales_view",
+            class_name="SalesView",
+            fields=[
+                IntrospectedField(name="revenue", field_type="metric", data_type="int", **metadata)
+            ],
+        )
+
+    def test_every_argument_in_a_fixed_order(self) -> None:
+        """``source``, ``label``, ``description``, ``synonyms``, ``semantic_format``."""
+        from semolina.codegen.python_renderer import render_views
+
+        source = render_views(
+            [
+                self._view(
+                    source_name="Revenue",
+                    label="Revenue (USD)",
+                    description="Gross revenue",
+                    synonyms=("sales", "turnover"),
+                    semantic_format=self._FORMAT,
+                )
+            ]
+        )
+        assert (
+            "    revenue = Metric[int | None](\n"
+            '        source="Revenue",\n'
+            '        label="Revenue (USD)",\n'
+            '        description="Gross revenue",\n'
+            '        synonyms=("sales", "turnover"),\n'
+            "        semantic_format={\n"
+            '            "display": {\n'
+            '                "compact": "auto",\n'
+            '                "decimals": [0, 2],\n'
+        ) in source
+
+    def test_the_model_reads_back_what_the_warehouse_reported(self) -> None:
+        """Every value survives the trip through generated source."""
+        from semolina.codegen.python_renderer import render_views
+
+        source = render_views(
+            [
+                self._view(
+                    label="Revenue (USD)",
+                    description="Gross revenue",
+                    synonyms=("sales",),
+                    semantic_format=self._FORMAT,
+                )
+            ]
+        )
+        revenue = _exec(source)["SalesView"].revenue
+        assert revenue.label == "Revenue (USD)"
+        assert revenue.description == "Gross revenue"
+        assert revenue.synonyms == ("sales",)
+        assert revenue.semantic_format == self._FORMAT
+        assert revenue.semantic_format.normal_form() == self._FORMAT.normal_form()
+
+    def test_a_single_synonym_is_still_a_tuple(self) -> None:
+        """``("sales",)``, not ``("sales")``, which is a string."""
+        from semolina.codegen.python_renderer import render_views
+
+        source = render_views([self._view(synonyms=("sales",))])
+        assert 'synonyms=("sales",),' in source
+
+    def test_source_alone_keeps_the_one_line_form(self) -> None:
+        """A view without metadata renders as it always has."""
+        from semolina.codegen.python_renderer import render_views
+
+        source = render_views([self._view(source_name="Revenue")])
+        assert '    revenue = Metric[int | None](source="Revenue")\n' in source
+
+    def test_view_description(self) -> None:
+        """The view's comment becomes the class's ``description=``."""
+        from semolina.codegen.python_renderer import render_views
+
+        view = IntrospectedView(
+            view_name="sales_view",
+            class_name="SalesView",
+            fields=[IntrospectedField(name="revenue", field_type="metric", data_type="int")],
+            description="Gross sales by country",
+        )
+        source = render_views([view])
+        assert (
+            "class SalesView(\n"
+            "    SemanticView,\n"
+            '    view="sales_view",\n'
+            '    description="Gross sales by country",\n'
+            "):\n"
+        ) in source
+        assert _exec(source)["SalesView"]._description == "Gross sales by country"
+
+    def test_the_output_is_ruff_formatted_already(self) -> None:
+        """Generated metadata needs no reformatting, so a file without ruff reads the same."""
+        from semolina.codegen.python_renderer import format_with_ruff, render_views, ruff_available
+
+        if not ruff_available():
+            pytest.skip("ruff is not installed")
+        source = render_views(
+            [
+                self._view(
+                    label="Revenue (USD)",
+                    description="Gross revenue",
+                    synonyms=("sales",),
+                    semantic_format=self._FORMAT,
+                )
+            ]
+        )
+        assert format_with_ruff(source) == source
 
 
 class TestMetricNullability:
@@ -930,8 +1068,41 @@ class TestWarehouseMetadataCannotInjectPython:
         assert _executes_only_imports_and_class_definitions(source)
         assert payload in _string_constants(source)
 
-    def test_a_multi_line_description_still_renders_as_a_docstring(self) -> None:
-        """The escape must not cost the readable multi-line rendering."""
+    def test_metadata_strings_cannot_close_their_literals(self) -> None:
+        """Label, synonyms, the view comment and a format extension are all literals."""
+        from semolina.codegen.python_renderer import render_views
+
+        payload = 'A"); import os; os.system("id") #'
+        block = validate_block({"value": {"kind": "number"}, "x-acme": {"note": payload}}, "metric")
+        view = IntrospectedView(
+            view_name="v",
+            class_name="V",
+            fields=[
+                IntrospectedField(
+                    name="c",
+                    field_type="metric",
+                    data_type="int",
+                    label=payload,
+                    synonyms=(payload, "plain"),
+                    semantic_format=block,
+                )
+            ],
+            description=payload,
+        )
+
+        source = render_views([view])
+
+        # Executing the module proves it: an escaped literal reads back as the exact string,
+        # and one that closed early would have run its code or failed to compile.
+        assert _string_constants(source).count(payload) == 4
+        c = _exec(source)["V"].c
+        assert c.label == payload
+        assert c.synonyms == (payload, "plain")
+        assert c.semantic_format == block
+        assert _exec(source)["V"]._description == payload
+
+    def test_a_multi_line_description_round_trips(self) -> None:
+        """A newline is escaped inside the literal and comes back exactly."""
         from semolina.codegen.python_renderer import render_views
 
         view = IntrospectedView(
@@ -949,7 +1120,7 @@ class TestWarehouseMetadataCannotInjectPython:
 
         source = render_views([view])
 
-        assert '"""first line\nsecond line"""' in source
+        assert 'description="first line\\nsecond line",' in source
         assert "first line\nsecond line" in _string_constants(source)
 
 

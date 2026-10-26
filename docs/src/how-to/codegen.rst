@@ -173,6 +173,19 @@ passes them to ``super().__init__(pool=..., dialect=...)``. Its ``introspect()``
                ],
            )
 
+An ``IntrospectedField`` can also carry ``description``, ``label`` and ``synonyms``,
+which codegen writes as the field's arguments, and an ``IntrospectedView`` a
+``description`` for the class. ``--check`` compares only the ones your engine lists in
+:py:attr:`~semolina.engines.base.Engine.introspected_metadata`, which is empty by
+default, so declare what your ``introspect()`` fills:
+
+.. code-block:: python
+
+   class CatalogueEngine(Engine):
+       introspected_metadata = frozenset(
+           {"description", "synonyms"}
+       )
+
 Save that as ``my_engines.py`` and pass ``--backend my_engines.CatalogueEngine``. Codegen
 adds the working directory to the end of ``sys.path`` before importing it, so a module
 beside you resolves without being installed, and an installed package of the same name
@@ -521,8 +534,8 @@ The comparison is per field, and the right-hand side is the **result schema** of
 query against the view: the types the warehouse says it would return. It is not a
 regenerated model diffed against yours, so reformatting your file, reordering fields,
 or renaming the class changes nothing. A row moves to ``drift`` when its annotation names
-a different type, when the field's role or column changed (see `Read the Detail lines`_),
-or when the field is declared on one side only.
+a different type, when the field's role, column or metadata changed (see
+`Read the Detail lines`_), or when the field is declared on one side only.
 
 No row of your data is fetched. The check reads the view's catalogue entry and asks
 the warehouse to type a query, which is why it is cheap enough to put in CI.
@@ -564,20 +577,29 @@ driver is free to answer one query and refuse the other.
 Read the Detail lines
 ~~~~~~~~~~~~~~~~~~~~~
 
-Two kinds of drift do not show up in the ``Committed`` and ``Probed`` columns, because
+Some drift does not show up in the ``Committed`` and ``Probed`` columns, because
 both sides still read the same annotation:
 
 - the field's **role** changed. A ``Metric`` committed as a ``Dimension`` lands in the
   wrong ``semantic_view()`` clause.
 - the field's **column** changed. A ``source=`` naming a column the warehouse has since
   renamed makes every query select something that is not there.
+- the field's **metadata** changed. Its ``description=``, ``label=`` or ``synonyms=``
+  no longer match what the warehouse records (see :ref:`howto-models-metadata`).
 
-Both move the row to ``drift`` and print a line under the table naming what moved:
+Each moves the row to ``drift`` and prints a line under the table naming what moved:
 
 .. code-block:: text
 
    Detail: revenue: role: committed Dimension, warehouse Metric
    Detail: country: column: committed 'OLD_NAME', warehouse 'NEW_NAME'
+   Detail: revenue: synonyms: committed ('sales',), warehouse ('sales', 'turnover')
+
+Only what the backend records is compared. Snowflake and DuckDB have no label slot, so a
+``label=`` you added there is never drift. Synonyms compare as a set, so their order
+doesn't matter. The model's own ``description=`` is compared with the view's comment, and
+a difference prints as ``Detail: (view): description: ...`` and makes the run exit ``5``
+even when every row matches.
 
 The column comparison is on the name the query will use, so adding
 ``source="COUNTRY"`` to a field the dialect already resolves to ``COUNTRY`` is not drift.
