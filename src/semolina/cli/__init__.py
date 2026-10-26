@@ -31,8 +31,8 @@ app.command(
         "  [green]0[/green]  Success\n\n"
         "  [yellow]1[/yellow]  Unexpected error, including generated source that does not "
         "parse or that an installed ruff fails on, a committed file under "
-        "[bold]--check[/bold] that does not parse, or S_LAYER_* tags that do not make a "
-        "valid format for their member\n\n"
+        "[bold]--check[/bold] that does not parse, or S_LAYER_* tags or a Databricks format "
+        "that do not make a valid format for their member\n\n"
         # Not "invalid backend": a --check with no file to read also exits 2, and a message
         # naming only the backend sends you looking in the wrong place.
         "  [yellow]2[/yellow]  Invalid option -- an unrecognized or omitted "

@@ -1,0 +1,1 @@
+DESCRIBE EXTENDED "formatted_view" AS JSON

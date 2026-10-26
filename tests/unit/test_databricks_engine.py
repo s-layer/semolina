@@ -286,6 +286,69 @@ class TestDatabricksEngineIntrospect:
         assert fields["country"].semantic_format == from_compact_json("category", None)
         assert fields["region"].semantic_format is None
 
+    _FORMATTED_JSON = json.dumps(
+        {
+            "columns": [
+                {
+                    "name": "revenue",
+                    "type": {"name": "bigint"},
+                    "is_measure": True,
+                    "metadata": {"format": {"currency": {"currency_code": "USD"}}},
+                },
+                {
+                    "name": "ordered_at",
+                    "type": {"name": "date"},
+                    "metadata": {"format": {"date": {"date_format": "YEAR_MONTH_DAY"}}},
+                },
+                {"name": "country", "type": {"name": "string"}},
+            ]
+        }
+    )
+
+    def test_reads_the_native_format_without_tags(self) -> None:
+        """A metric view written by hand gets its semantic format from native ``format``."""
+        from s_layer_semantic_formats import validate_block
+
+        view = self._introspect(_make_databricks_engine(), self._FORMATTED_JSON)
+
+        fields = {f.name: f for f in view.fields}
+        assert fields["revenue"].semantic_format == validate_block(
+            {"value": {"kind": "currency", "currency": "USD"}}, "metric"
+        )
+        assert fields["ordered_at"].semantic_format == validate_block(
+            {"value": {"kind": "date"}, "display": {"date_style": "iso"}}, "dimension"
+        )
+        assert fields["country"].semantic_format is None
+
+    def test_tags_win_over_the_native_format(self) -> None:
+        """The tags are canonical; native ``format`` is only their projection."""
+        from s_layer_semantic_formats import from_compact_json
+
+        view = self._introspect(
+            _make_databricks_engine(),
+            self._FORMATTED_JSON,
+            tag_rows=[("revenue", "S_LAYER_KIND", "number")],
+        )
+
+        fields = {f.name: f for f in view.fields}
+        assert fields["revenue"].semantic_format == from_compact_json("number", None)
+
+    def test_refuses_a_native_format_that_makes_no_valid_block(self) -> None:
+        payload = json.dumps(
+            {
+                "columns": [
+                    {
+                        "name": "revenue",
+                        "type": {"name": "bigint"},
+                        "is_measure": True,
+                        "metadata": {"format": {"currency": {}}},
+                    }
+                ]
+            }
+        )
+        with pytest.raises(ValueError, match="Databricks format on 'revenue'"):
+            self._introspect(_make_databricks_engine(), payload)
+
     def test_reads_tags_for_the_view_describe_resolved(self) -> None:
         """The catalog, schema and table come from ``DESCRIBE``, whatever the name spelling."""
         engine = _make_databricks_engine()
