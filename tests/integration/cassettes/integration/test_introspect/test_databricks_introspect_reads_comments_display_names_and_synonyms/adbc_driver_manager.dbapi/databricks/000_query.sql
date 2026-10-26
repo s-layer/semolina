@@ -1,0 +1,1 @@
+DESCRIBE EXTENDED "annotated_view" AS JSON
