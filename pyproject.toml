@@ -44,7 +44,7 @@ duckdb = [
     # Pinned: the version-locked `semantic_views` community extension only has
     # published binaries for specific DuckDB core versions. Bumped automatically
     # by .github/workflows/duckdb-extension-check.yml when a newer build ships.
-    "duckdb==1.5.6",
+    "duckdb==2.0.0",
     "semolina[pyarrow]",
 ]
 cli = [
