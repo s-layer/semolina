@@ -9,7 +9,7 @@ Databricks-specific ``introspect()``, which runs
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from semolina.engines.base import Engine, _translate_introspection_errors
 
@@ -87,6 +87,9 @@ def _introspect_databricks(cursor: Any, view_name: str, *, described: str) -> In
         raw_type_name = type_obj.get("name") if isinstance(type_obj, dict) else str(type_obj)
         data_type = py_type if py_type is not None else f"TODO: {raw_type_name}"
         description = str(col.get("comment") or "")
+        metadata: Any = col.get("metadata") or {}
+        label = metadata.get("display_name") if isinstance(metadata, dict) else None
+        synonyms: Any = metadata.get("synonyms") if isinstance(metadata, dict) else None
 
         # Databricks folds unquoted identifiers to lowercase (see
         # DatabricksDialect.normalize_identifier). Set source_name
@@ -103,6 +106,8 @@ def _introspect_databricks(cursor: Any, view_name: str, *, described: str) -> In
                 description=description,
                 raw_type=raw_type_name,
                 source_name=source_name,
+                label=str(label) if label else None,
+                synonyms=tuple(str(s) for s in synonyms) if isinstance(synonyms, list) else (),
             )
         )
 
@@ -110,6 +115,7 @@ def _introspect_databricks(cursor: Any, view_name: str, *, described: str) -> In
         view_name=view_name,
         class_name=_to_pascal_case(view_name),
         fields=with_python_field_names(fields, columns),
+        description=str(payload.get("comment") or ""),
     )
 
 
@@ -182,6 +188,10 @@ class DatabricksEngine(Engine):
         - semolina.engines.sql.DatabricksDialect: SQL generation rules
         - semolina.engines.sql.SQLBuilder: Query to SQL converter
     """
+
+    introspected_metadata: ClassVar[frozenset[str]] = frozenset(
+        {"description", "label", "synonyms"}
+    )
 
     def introspect(self, view_name: str) -> IntrospectedView:
         """

@@ -10,11 +10,12 @@ module keep working.
 from __future__ import annotations
 
 import functools
+import json
 import keyword
 import re
 import unicodedata
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from semolina.introspection import IntrospectedField, IntrospectedView
 
@@ -25,6 +26,7 @@ __all__ = [
     "PLACEHOLDER_FIELD_NAME",
     "class_name_for",
     "python_field_names",
+    "synonyms_from_json",
     "IntrospectedField",
     "IntrospectedView",
     "with_python_field_names",
@@ -43,6 +45,39 @@ Soft keywords a generated field name avoids, fixed so output does not depend on 
 must write the same model whichever Python runs it, or ``codegen --check`` would flip between
 versions.
 """
+
+
+def synonyms_from_json(value: str | None) -> tuple[str, ...]:
+    """
+    Read a ``SYNONYMS`` property, which ``DESCRIBE SEMANTIC VIEW`` reports as a JSON list.
+
+    Snowflake and the DuckDB ``semantic_views`` extension both spell it this way.
+
+    Args:
+        value: The property value, or None (or empty) when the member has no synonyms.
+
+    Returns:
+        The synonyms in the order the view declares them.
+
+    Raises:
+        ValueError: If the value is not a JSON list of strings.
+
+    Example:
+        .. code-block:: python
+
+            synonyms_from_json('["sales","turnover"]')
+            # ('sales', 'turnover')
+    """
+    if not value:
+        return ()
+    try:
+        parsed: object = json.loads(value)
+    except ValueError:
+        parsed = None
+    if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+        msg = f"SYNONYMS should be a JSON list of strings, got {value!r}"
+        raise ValueError(msg)
+    return tuple(cast("list[str]", parsed))
 
 
 def class_name_for(view_name: str, *, reserved: frozenset[str] | None = None) -> str:

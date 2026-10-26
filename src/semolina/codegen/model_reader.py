@@ -37,14 +37,17 @@ beside the report.
 from __future__ import annotations
 
 import ast
+import dataclasses
+import inspect
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from semolina.codegen.static_reader import ClassSource, StaticModule, walk_statement
 from semolina.codegen.type_compare import ALLOWED_MODULES, canonical_annotation
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Mapping
 
     import griffe
 
@@ -95,6 +98,12 @@ class CommittedField:
             spelling (``'decimal.Decimal | None'``), which is what the check compares. None
             when it uses a name or syntax the comparison cannot resolve, and the text as
             written is compared instead.
+        metadata: The metadata arguments the declaration passes, by name (``label``,
+            ``description``, ``synonyms``, ``semantic_format``), as literal values: a string,
+            a tuple of strings, or the format's dict. A field with no ``description=`` but
+            an attribute docstring right after it reads the docstring as its description,
+            which is how codegen wrote it before ``description=`` existed. An argument the
+            reader cannot evaluate is warned about and left out, so it is not compared.
     """
 
     name: str
@@ -102,6 +111,7 @@ class CommittedField:
     annotation: str
     source_name: str | None
     resolved_annotation: str | None = None
+    metadata: Mapping[str, object] = dataclasses.field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -114,11 +124,14 @@ class CommittedModel:
         view_name: The ``view=`` keyword's value — the warehouse identifier.
         fields: Field name -> declaration: inherited fields first, then the class's own,
             each in source order.
+        description: The class's ``description=`` keyword, or None when it passes none or
+            passes something the reader cannot evaluate (warned about).
     """
 
     class_name: str
     view_name: str
     fields: dict[str, CommittedField]
+    description: str | None = None
 
 
 @dataclass(frozen=True)
@@ -324,7 +337,53 @@ class _ClassReader:
             annotation=annotation,
             source_name=source_name,
             resolved_annotation=resolved,
+            metadata=self.metadata_of(statement, value),
         )
+
+    def metadata_of(self, statement: ast.stmt, call: ast.Call) -> dict[str, object]:
+        """
+        Read a field declaration's metadata arguments as literal values.
+
+        Args:
+            statement: The declaring statement, for a warning.
+            call: The field constructor call.
+
+        Returns:
+            Argument name -> value, for each metadata argument the reader could evaluate.
+        """
+        metadata: dict[str, object] = {}
+        for keyword in call.keywords:
+            if keyword.arg not in METADATA_ARGUMENTS:
+                continue
+            value = self.literal(keyword.value)
+            if value is _UNREADABLE:
+                self.warn(
+                    statement,
+                    f"has a {keyword.arg}= the reader cannot evaluate; it was not compared",
+                )
+                continue
+            metadata[keyword.arg] = value
+        return metadata
+
+    def literal(self, node: ast.expr) -> object:
+        """
+        Evaluate a metadata argument: a literal, or a string constant by name.
+
+        Args:
+            node: The argument's expression.
+
+        Returns:
+            The value, with lists read as tuples so ``synonyms`` compares by value, or
+            :data:`_UNREADABLE`.
+        """
+        text = self.static.string_constant(node, self.scope)
+        if text is not None:
+            return text
+        try:
+            value: object = ast.literal_eval(node)
+        except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+            return _UNREADABLE
+        return tuple(cast("list[object]", value)) if isinstance(value, list) else value
 
     def source_name_of(self, statement: ast.stmt, call: ast.Call) -> str | None:
         """
@@ -389,8 +448,19 @@ class _ClassReader:
             Field name -> declaration, in source order.
         """
         fields: dict[str, CommittedField] = {}
+        previous: CommittedField | None = None
         for statement in self.source.node.body:
+            docstring = _string_statement(statement)
+            if previous is not None and docstring is not None:
+                if "description" not in previous.metadata:
+                    previous = dataclasses.replace(
+                        previous, metadata={**previous.metadata, "description": docstring}
+                    )
+                    fields[previous.name] = previous
+                previous = None
+                continue
             field = self.read_assignment(statement)
+            previous = field
             if field is not None:
                 fields[field.name] = field
                 self.removed.discard(field.name)
@@ -431,6 +501,33 @@ class _ClassReader:
         return [target.id for target in targets if isinstance(target, ast.Name)]
 
 
+METADATA_ARGUMENTS = ("label", "description", "synonyms", "semantic_format")
+"""The field constructor arguments that carry metadata, in the order codegen writes them."""
+
+_UNREADABLE = object()
+"""What :meth:`_ClassReader.literal` returns for an argument it cannot evaluate."""
+
+
+def _string_statement(statement: ast.stmt) -> str | None:
+    """
+    Return the string a bare string statement holds, as an attribute docstring does.
+
+    Args:
+        statement: A statement from a class body.
+
+    Returns:
+        The string, cleaned as :func:`inspect.cleandoc` cleans a docstring, or None when the
+        statement is anything else.
+    """
+    if (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Constant)
+        and isinstance(statement.value.value, str)
+    ):
+        return inspect.cleandoc(statement.value.value)
+    return None
+
+
 def _read_class(
     static: StaticModule, node: ast.ClassDef, warnings: list[str]
 ) -> CommittedModel | None:
@@ -467,7 +564,19 @@ def _read_class(
         for name in reader.removed:
             fields.pop(name, None)
         fields.update(declared)
-    return CommittedModel(class_name=node.name, view_name=view_name, fields=fields)
+    description_keyword = next((k for k in node.keywords if k.arg == "description"), None)
+    description = None
+    if description_keyword is not None:
+        description = static.string_constant(description_keyword.value, source.scope)
+        if description is None:
+            warnings.append(
+                f"{node.name} (line {node.lineno}): description="
+                f"{ast.unparse(description_keyword.value)} is not a string or a string "
+                "constant the reader can find; it was not compared"
+            )
+    return CommittedModel(
+        class_name=node.name, view_name=view_name, fields=fields, description=description
+    )
 
 
 def _nested_view_classes(tree: ast.Module) -> list[ast.ClassDef]:

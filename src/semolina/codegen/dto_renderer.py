@@ -65,7 +65,6 @@ from semolina.codegen.dto_reader import DOCSTRING_PREFIX
 from semolina.codegen.probe import probe_schema
 from semolina.codegen.python_renderer import (
     _BUILTIN_ANNOTATION_NAMES,
-    _docstring_body,
     _python_str_literal,
     check_parses,
     format_with_ruff,
@@ -135,6 +134,30 @@ module's globals, so every ``Any``-typed field then names the class. The set dif
 a DTO module imports ``pydantic`` and ``__future__.annotations`` and nothing from semolina.
 Built from the constants :func:`_build_dto_import_lines` uses, so the two cannot drift.
 """
+
+
+def _docstring_body(text: str) -> str:
+    r"""
+    Escape text for the inside of a triple-double-quoted Python string.
+
+    ``repr`` is used for every other interpolated string, but not here: it would collapse a
+    multi-line column comment onto one line with ``\n`` escapes, and a field docstring is
+    something the user reads. Keeping the triple-quoted form means escaping only the two
+    characters that can end it early -- a backslash, and a quote that could complete the
+    closing delimiter.
+
+    Every ``"`` is escaped rather than only the runs that would actually terminate the
+    literal. A rule that has to reason about run lengths and trailing positions is a rule
+    that gets an edge case wrong; ``""`` immediately before the closing delimiter is enough
+    to break it, and so is a lone trailing ``"``.
+
+    Args:
+        text: The raw description.
+
+    Returns:
+        The body to place between the triple-quote delimiters.
+    """
+    return text.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _known_backend_label(dialect: SQLDialect) -> str | None:

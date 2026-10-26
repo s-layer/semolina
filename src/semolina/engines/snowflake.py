@@ -9,7 +9,8 @@ the engine's owned ADBC pool.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from semolina.engines.base import Engine, _translate_introspection_errors
 from semolina.exceptions import (
@@ -85,6 +86,41 @@ def _to_pascal_case(view_name: str) -> str:
     return class_name_for(view_name)
 
 
+def _describe_annotations(
+    cursor: Any, qualified_name: str
+) -> tuple[dict[str, tuple[str, ...]], str]:
+    """
+    Read member synonyms and the view's own comment from ``DESCRIBE SEMANTIC VIEW``.
+
+    ``SHOW COLUMNS IN VIEW`` reports each member's comment but not its synonyms, and nothing
+    about the view itself, so this second statement fills those in.
+
+    Args:
+        cursor: An open ADBC cursor on a Snowflake connection.
+        qualified_name: The quoted three-part view name.
+
+    Returns:
+        Member name (as stored) to its synonyms, and the view's comment (empty when none).
+
+    Raises:
+        ValueError: If a ``SYNONYMS`` value is not a JSON list of strings.
+    """
+    from semolina.codegen.introspector import synonyms_from_json
+
+    cursor.execute(f"DESCRIBE SEMANTIC VIEW {qualified_name}")
+    columns = [desc[0].lower() for desc in cursor.description]
+    synonyms: dict[str, tuple[str, ...]] = {}
+    view_comment = ""
+    for row in cursor.fetchall():
+        d: dict[str, Any] = dict(zip(columns, row, strict=True))
+        kind, prop, value = d.get("object_kind"), d.get("property"), d.get("property_value")
+        if not kind and prop == "COMMENT":
+            view_comment = str(value or "")
+        elif kind in ("METRIC", "DIMENSION", "FACT") and prop == "SYNONYMS":
+            synonyms[str(d["object_name"])] = synonyms_from_json(value)
+    return synonyms, view_comment
+
+
 def _introspect_snowflake(cursor: Any, view_name: str) -> IntrospectedView:
     """
     Describe a Snowflake semantic view over an open cursor.
@@ -155,10 +191,17 @@ def _introspect_snowflake(cursor: Any, view_name: str) -> IntrospectedView:
             )
         )
 
+    synonyms, view_comment = _describe_annotations(cursor, qualified_name)
+    fields = [
+        replace(f, synonyms=synonyms.get(column, ()))
+        for f, column in zip(fields, column_names, strict=True)
+    ]
+
     return IntrospectedView(
         view_name=view_name,
         class_name=_to_pascal_case(view_name),
         fields=with_python_field_names(fields, column_names),
+        description=view_comment,
     )
 
 
@@ -224,6 +267,8 @@ class SnowflakeEngine(Engine):
         - semolina.engines.sql.SnowflakeDialect: SQL generation rules
         - semolina.engines.sql.SQLBuilder: Query to SQL converter
     """
+
+    introspected_metadata: ClassVar[frozenset[str]] = frozenset({"description", "synonyms"})
 
     def introspect(self, view_name: str) -> IntrospectedView:
         """

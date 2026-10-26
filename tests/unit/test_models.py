@@ -531,3 +531,30 @@ class TestSemanticViewRepr:
     def test_base_class_repr_does_not_crash(self) -> None:
         """The base class, which has no view, still has a repr."""
         assert repr(SemanticView).startswith("<")
+
+
+class TestModelDescription:
+    """A model's ``description=`` class keyword, for its view's comment."""
+
+    def test_the_description_is_kept(self) -> None:
+        class Sales(SemanticView, view="sales", description="Sales by country"):
+            revenue = Metric[float]()
+
+        assert Sales._description == "Sales by country"
+
+    def test_it_defaults_to_none(self) -> None:
+        class Sales(SemanticView, view="sales"):
+            revenue = Metric[float]()
+
+        assert Sales._description is None
+
+    def test_a_subclass_does_not_inherit_it(self) -> None:
+        """The description describes one view; a subclass names another."""
+
+        class Base(SemanticView, abstract=True, description="Base words"):
+            revenue = Metric[float]()
+
+        class Sales(Base, view="sales"):
+            pass
+
+        assert Sales._description is None

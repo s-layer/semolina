@@ -245,6 +245,43 @@ class TestDatabricksEngineIntrospect:
 
         assert view.fields[0].data_type == "TODO: geography"
 
+    def test_reads_comment_display_name_and_synonyms(self) -> None:
+        """
+        ``comment`` sits on the column; ``display_name`` and ``synonyms`` under ``metadata``.
+
+        The shape was checked live (DBSQL 2026.39) on a YAML 1.1 metric view. The view's
+        own comment is the payload's top-level ``comment``.
+        """
+        payload = json.dumps(
+            {
+                "comment": "Gross sales by country",
+                "columns": [
+                    {
+                        "name": "revenue",
+                        "type": {"name": "bigint"},
+                        "is_measure": True,
+                        "comment": "Gross revenue",
+                        "metadata": {
+                            "display_name": "Revenue",
+                            "synonyms": ["sales", "turnover"],
+                        },
+                    },
+                    {"name": "country", "type": {"name": "string"}},
+                ],
+            }
+        )
+        engine = _make_databricks_engine()
+        view = self._introspect(engine, payload)
+
+        assert view.description == "Gross sales by country"
+        revenue, country = view.fields
+        assert (revenue.description, revenue.label, revenue.synonyms) == (
+            "Gross revenue",
+            "Revenue",
+            ("sales", "turnover"),
+        )
+        assert (country.description, country.label, country.synonyms) == ("", None, ())
+
     def test_non_round_tripping_name_sets_source_name(self) -> None:
         """A mixed-case column name preserves the exact warehouse name in source_name."""
         payload = json.dumps(

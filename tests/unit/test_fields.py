@@ -724,3 +724,61 @@ class TestFieldGeneric:
         # Must return the descriptor itself, not a T value
         field = M.revenue
         assert isinstance(field, Metric)
+
+
+class TestFieldMetadata:
+    """``label``, ``description``, ``synonyms`` and ``semantic_format`` on a field."""
+
+    CURRENCY: dict[str, Any] = {"value": {"kind": "currency", "currency": "USD"}}
+
+    def test_defaults_are_empty(self) -> None:
+        field = Metric[float]()
+        assert field.label is None
+        assert field.description is None
+        assert field.synonyms == ()
+        assert field.semantic_format is None
+
+    def test_arguments_are_kept(self) -> None:
+        field = Dimension[str](
+            "COUNTRY", label="Country", description="Ship-to country", synonyms=["nation"]
+        )
+        assert field.source == "COUNTRY"
+        assert field.label == "Country"
+        assert field.description == "Ship-to country"
+        assert field.synonyms == ("nation",)
+
+    def test_a_bare_string_is_not_taken_as_synonyms(self) -> None:
+        """``synonyms="nation"`` would otherwise read as six one-letter synonyms."""
+        with pytest.raises(TypeError, match="synonyms"):
+            Dimension[str](synonyms="nation")
+
+    def test_a_format_mapping_is_validated_into_a_block(self) -> None:
+        from s_layer_semantic_formats import SLayerBlock, validate_block
+
+        field = Metric[float](semantic_format=self.CURRENCY)
+
+        assert isinstance(field.semantic_format, SLayerBlock)
+        assert field.semantic_format == validate_block(self.CURRENCY, "metric")
+
+    def test_a_block_is_accepted_as_is(self) -> None:
+        from s_layer_semantic_formats import validate_block
+
+        block = validate_block(self.CURRENCY, "fact")
+        assert Fact[float](semantic_format=block).semantic_format == block
+
+    def test_a_kind_for_another_member_type_is_rejected(self) -> None:
+        from s_layer_semantic_formats import SLayerValidationError
+
+        with pytest.raises(SLayerValidationError, match="not a dimension"):
+            Dimension[str](semantic_format=self.CURRENCY)
+
+    def test_an_invalid_block_is_a_value_error(self) -> None:
+        with pytest.raises(ValueError, match="value"):
+            Metric[float](semantic_format={"kind": "currency"})
+
+    @pytest.mark.parametrize("key", ["label", "synonyms"])
+    def test_a_block_carrying_a_field_argument_is_rejected(self, key: str) -> None:
+        """One place for each: the field's own argument, not a copy inside the block."""
+        carried = {**self.CURRENCY, key: "Revenue" if key == "label" else ["sales"]}
+        with pytest.raises(ValueError, match=f"pass {key}="):
+            Metric[float](semantic_format=carried)

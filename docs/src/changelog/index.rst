@@ -24,6 +24,17 @@ a ``datetime`` below that, and weeks start on Monday, whatever Snowflake's ``WEE
 says. On DuckDB it needs ``semantic_views`` 0.16.0 or later. :ref:`howto-time-grain` has
 the details.
 
+**Describe your fields.** ``Metric``, ``Dimension`` and ``Fact`` take ``label=``,
+``description=``, ``synonyms=`` and ``semantic_format=``, and a model takes
+``description=`` for its view. ``semantic_format`` is an S-LAYER block from the new
+``s-layer-semantic-formats`` dependency, validated against the field's kind when the class
+is defined. ``semolina codegen`` writes the description and synonyms it reads from every
+backend, plus Databricks' ``display_name`` as the label, as these arguments instead of a
+field docstring, and ``--check`` reports any that no longer match the warehouse. A model
+generated with docstrings still checks clean. Snowflake introspection now also runs
+``DESCRIBE SEMANTIC VIEW`` to read synonyms and the view comment.
+:ref:`howto-models-metadata` has the details.
+
 **Fixed: date and time filters on Snowflake.** A ``.where()`` value that is a ``date``,
 ``datetime`` or ``time`` failed at execution on Snowflake with ``Unsupported bind param
 type``, because the Snowflake ADBC driver can't bind those types. Semolina now writes them

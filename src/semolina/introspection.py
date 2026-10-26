@@ -10,7 +10,10 @@ Frozen dataclasses describing a semantic view as the warehouse reports it. Each 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from s_layer_semantic_formats import SLayerBlock
 
 __all__ = ["IntrospectedField", "IntrospectedView"]
 
@@ -45,6 +48,12 @@ class IntrospectedField:
             so the renderer can preserve it as a comment for annotations that
             do not name it. None means the engine supplied no raw type, and the
             renderer then emits no comment rather than guessing one.
+        label: The field's display name, where the warehouse has one (Databricks'
+            ``display_name``). None when it has none.
+        synonyms: Other names for the field, from the warehouse's synonyms clause, in the
+            order it reports them. Empty when it has none.
+        semantic_format: What the values mean, as an S-LAYER block, where the warehouse
+            carries one. None when it carries none.
     """
 
     name: str
@@ -53,6 +62,9 @@ class IntrospectedField:
     description: str = ""
     source_name: str | None = None
     raw_type: str | None = None
+    label: str | None = None
+    synonyms: tuple[str, ...] = ()
+    semantic_format: SLayerBlock | None = None
 
 
 @dataclass(frozen=True)
@@ -70,8 +82,11 @@ class IntrospectedView:
             Derived from view_name by the introspection layer (snake_case → PascalCase).
         fields: All fields discovered in the view, in the order returned by the
             warehouse API. Includes metrics, dimensions, and facts.
+        description: The view's own comment. Defaults to empty string if the warehouse
+            provides none.
     """
 
     view_name: str
     class_name: str
     fields: list[IntrospectedField] = field(default_factory=list)
+    description: str = ""

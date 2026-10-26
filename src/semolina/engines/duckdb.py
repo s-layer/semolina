@@ -14,7 +14,7 @@ from __future__ import annotations
 import contextlib
 import re
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from semolina.engines.base import Engine
 
@@ -160,6 +160,24 @@ def _parse_describe_semantic_view(
     return dict(fields)
 
 
+def _view_comment(rows: list[tuple[str, str, str, str, str]]) -> str:
+    """
+    Find the view's own ``COMMENT`` among ``DESCRIBE SEMANTIC VIEW`` rows.
+
+    The view-level row is the one with no object kind or name.
+
+    Args:
+        rows: Raw rows from ``DESCRIBE SEMANTIC VIEW``.
+
+    Returns:
+        The comment, or an empty string when the view has none.
+    """
+    for object_kind, object_name, _parent_entity, prop, prop_value in rows:
+        if not object_kind and not object_name and prop == "COMMENT":
+            return prop_value or ""
+    return ""
+
+
 def _introspect_duckdb(cursor: Any, view_name: str, *, described: str) -> IntrospectedView:
     """
     Describe a DuckDB semantic view over an open cursor.
@@ -183,6 +201,7 @@ def _introspect_duckdb(cursor: Any, view_name: str, *, described: str) -> Intros
         Intermediate representation of the view, ready for code rendering.
     """
     from semolina.codegen.introspector import (
+        synonyms_from_json,
         with_python_field_names,
     )
     from semolina.codegen.type_map import duckdb_type_to_python
@@ -272,6 +291,7 @@ def _introspect_duckdb(cursor: Any, view_name: str, *, described: str) -> Intros
                 data_type=data_type,
                 description=description,
                 raw_type=sql_type,
+                synonyms=synonyms_from_json(props.get("synonyms")),
             )
         )
 
@@ -279,6 +299,7 @@ def _introspect_duckdb(cursor: Any, view_name: str, *, described: str) -> Intros
         view_name=view_name,
         class_name=_to_pascal_case(view_name),
         fields=with_python_field_names(fields, columns),
+        description=_view_comment(raw_rows),
     )
 
 
@@ -356,6 +377,8 @@ class DuckDBEngine(Engine):
         - semolina.codegen.type_map.duckdb_type_to_python: Type mapping
         - semolina.codegen.python_renderer: Code generation from IntrospectedView
     """
+
+    introspected_metadata: ClassVar[frozenset[str]] = frozenset({"description", "synonyms"})
 
     def introspect(self, view_name: str) -> IntrospectedView:
         """

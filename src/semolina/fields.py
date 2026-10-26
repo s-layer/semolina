@@ -15,6 +15,7 @@ from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
     Generic,
     Literal,
     Self,
@@ -77,7 +78,9 @@ DATE_GRAINS = frozenset(GRAINS[: GRAINS.index("day") + 1])
 """The grains a ``DATE`` can be truncated to, and those whose result is a ``DATE``."""
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
+
+    from s_layer_semantic_formats import MemberType, SLayerBlock
 
     from .filters import (
         Between,
@@ -178,7 +181,18 @@ class Field(Generic[T]):
             Users.country.isnull()                # -> IsNull(...)
     """
 
-    def __init__(self, source: str | None = None) -> None:
+    _member_type: ClassVar[MemberType | None] = None
+    """The S-LAYER member type a ``semantic_format`` is checked against, or None for any."""
+
+    def __init__(
+        self,
+        source: str | None = None,
+        *,
+        label: str | None = None,
+        description: str | None = None,
+        synonyms: Iterable[str] = (),
+        semantic_format: SLayerBlock | Mapping[str, Any] | None = None,
+    ) -> None:
         """
         Initialize field descriptor.
 
@@ -194,10 +208,35 @@ class Field(Generic[T]):
 
                 When source is None (the default), the SQL builder applies
                 ``dialect.normalize_identifier(field.name)`` to derive the column name.
+            label: A short display name, such as ``"Revenue (USD)"``.
+            description: What the field holds, as the warehouse's ``COMMENT`` says it.
+            synonyms: Other names people use for the field, such as ``("sales",)``.
+            semantic_format: What the values mean, as an S-LAYER block: a mapping such as
+                ``{"value": {"kind": "currency", "currency": "USD"}}``, or an
+                :class:`s_layer_semantic_formats.SLayerBlock`. Validated here, so a typo
+                fails when the model is defined. The label and synonyms have their own
+                arguments and may not appear in the block.
+
+        Raises:
+            TypeError: If ``synonyms`` is a string rather than a collection of strings.
+            ValueError: If ``semantic_format`` is not a valid block for this kind of field
+                (an :class:`s_layer_semantic_formats.SLayerValidationError`), or carries a
+                ``label`` or ``synonyms`` of its own.
         """
         self.name: str | None = None
         self.source: str | None = source
         self.owner: type | None = None
+        self.label: str | None = label
+        self.description: str | None = description
+        if isinstance(synonyms, str):
+            raise TypeError(
+                f"synonyms takes a collection of strings, not the string {synonyms!r}. "
+                f"Did you mean ({synonyms!r},)?"
+            )
+        self.synonyms: tuple[str, ...] = tuple(synonyms)
+        self.semantic_format: SLayerBlock | None = _semantic_format(
+            semantic_format, self._member_type
+        )
 
     def __set_name__(self, owner: type, name: str) -> None:
         """
@@ -789,7 +828,7 @@ class Metric(Field[T]):
     such as SUM(revenue), AVG(price), COUNT(*).
     """
 
-    pass
+    _member_type: ClassVar[MemberType | None] = "metric"
 
 
 class Dimension(Field[T]):
@@ -800,14 +839,34 @@ class Dimension(Field[T]):
     grouping and filtering, such as country, product_category, date.
     """
 
-    def __init__(self, source: str | None = None) -> None:
+    _member_type: ClassVar[MemberType | None] = "dimension"
+
+    def __init__(
+        self,
+        source: str | None = None,
+        *,
+        label: str | None = None,
+        description: str | None = None,
+        synonyms: Iterable[str] = (),
+        semantic_format: SLayerBlock | Mapping[str, Any] | None = None,
+    ) -> None:
         """
         Initialize the dimension.
 
         Args:
             source: Optional explicit SQL column name. See :class:`Field`.
+            label: A short display name. See :class:`Field`.
+            description: What the field holds. See :class:`Field`.
+            synonyms: Other names for the field. See :class:`Field`.
+            semantic_format: What the values mean. See :class:`Field`.
         """
-        super().__init__(source)
+        super().__init__(
+            source,
+            label=label,
+            description=description,
+            synonyms=synonyms,
+            semantic_format=semantic_format,
+        )
         self._grains: dict[str, GrainedDimension] = {}
 
     def __set_name__(self, owner: type, name: str) -> None:
@@ -888,6 +947,39 @@ class Dimension(Field[T]):
             )
         self._grains[unit] = grained
         return grained
+
+
+def _semantic_format(
+    value: SLayerBlock | Mapping[str, Any] | None, member_type: MemberType | None
+) -> SLayerBlock | None:
+    """
+    Validate a field's ``semantic_format`` argument.
+
+    Args:
+        value: The argument as given.
+        member_type: The kind of field, checked against the block's kind; None for a plain
+            :class:`Field`, which takes any kind.
+
+    Returns:
+        The validated block, or None when none was given.
+
+    Raises:
+        ValueError: If the block is invalid, or carries a ``label`` or ``synonyms``.
+    """
+    if value is None:
+        return None
+    from s_layer_semantic_formats import parse_block, validate_block
+
+    block = parse_block(value) if member_type is None else validate_block(value, member_type)
+    carried = [key for key in ("label", "synonyms") if getattr(block, key) is not None]
+    if carried:
+        names = " and ".join(carried)
+        raise ValueError(
+            f"semantic_format carries {names}, which a field takes as its own "
+            f"argument{'s' if len(carried) > 1 else ''}: pass "
+            f"{', '.join(f'{key}=' for key in carried)} instead."
+        )
+    return block
 
 
 def declared_type(field: Field[Any]) -> object:
@@ -988,7 +1080,7 @@ class Fact(Field[T]):
     in calculations but aren't pre-aggregated, such as unit_price, quantity.
     """
 
-    pass
+    _member_type: ClassVar[MemberType | None] = "fact"
 
 
 @dataclass(frozen=True, eq=False)

@@ -1183,3 +1183,171 @@ class TestSnowflakeFromTheCommittedRecording:
         row = row_named(report, "revenue")
         assert row.committed == "int | None"
         assert row.probed == "decimal.Decimal | None"
+
+
+class TestMetadataIsComparedToo:
+    """
+    A committed field's ``description=``/``label=``/``synonyms=`` drift like its annotation.
+
+    Only what the engine reads is compared (``Engine.introspected_metadata``), so a backend
+    without a slot for something does not report it as lost.
+    """
+
+    @pytest.fixture
+    def annotated_engine(self) -> Generator[Engine]:
+        """A DuckDB engine with one view carrying a view comment, member comments, synonyms."""
+        from adbc_poolhouse import DuckDBConfig
+
+        from semolina.config import create_engine
+
+        engine = create_engine(DuckDBConfig(database=":memory:", pool_size=1))
+        with engine.connect() as conn:
+            cur = conn.cursor()
+            load_semantic_views(cur)
+            cur.execute("CREATE TABLE sales_data (id INTEGER, country VARCHAR, amount DOUBLE)")
+            cur.execute(
+                """
+                CREATE SEMANTIC VIEW annotated COMMENT = 'Sales by country' AS
+                TABLES (s AS sales_data PRIMARY KEY (id))
+                DIMENSIONS (s.country AS s.country WITH SYNONYMS = ('nation', 'land'))
+                METRICS (
+                    s.revenue AS SUM(s.amount)
+                        COMMENT = 'Gross revenue'
+                        WITH SYNONYMS = ('sales')
+                )
+                """
+            )
+            cur.close()
+            conn.commit()
+        yield engine
+        engine.dispose()
+
+    @staticmethod
+    def with_metadata(model: CommittedModel, name: str, **metadata: object) -> CommittedModel:
+        """Return ``model`` with one field's metadata arguments replaced by ``metadata``."""
+        import dataclasses
+
+        fields = dict(model.fields)
+        fields[name] = dataclasses.replace(fields[name], metadata=metadata)
+        return dataclasses.replace(model, fields=fields)
+
+    def test_a_freshly_generated_model_round_trips_its_metadata(
+        self, annotated_engine: Engine
+    ) -> None:
+        committed = committed_from_warehouse(annotated_engine, "annotated")
+
+        assert committed.description == "Sales by country"
+        assert committed.fields["revenue"].metadata == {
+            "description": "Gross revenue",
+            "synonyms": ("sales",),
+        }
+        report = check_view(annotated_engine, "annotated", committed)
+        assert report.has_drift is False, report
+        assert report.detail == ""
+
+    def test_a_changed_description_is_drift(self, annotated_engine: Engine) -> None:
+        committed = committed_from_warehouse(annotated_engine, "annotated")
+        stale = self.with_metadata(
+            committed, "revenue", description="Net revenue", synonyms=("sales",)
+        )
+
+        row = row_named(check_view(annotated_engine, "annotated", stale), "revenue")
+
+        assert row.status == STATUS_DRIFT
+        assert "description" in row.detail and "Net revenue" in row.detail
+
+    def test_a_missing_synonym_is_drift(self, annotated_engine: Engine) -> None:
+        committed = committed_from_warehouse(annotated_engine, "annotated")
+        stale = self.with_metadata(committed, "country", synonyms=("nation",))
+
+        row = row_named(check_view(annotated_engine, "annotated", stale), "country")
+
+        assert row.status == STATUS_DRIFT
+        assert "synonyms" in row.detail
+
+    def test_reordered_synonyms_are_not_drift(self, annotated_engine: Engine) -> None:
+        committed = committed_from_warehouse(annotated_engine, "annotated")
+        reordered = self.with_metadata(committed, "country", synonyms=("land", "nation"))
+
+        row = row_named(check_view(annotated_engine, "annotated", reordered), "country")
+
+        assert row.status == STATUS_MATCH, row.detail
+
+    def test_a_label_is_not_compared_where_the_backend_has_no_slot_for_one(
+        self, annotated_engine: Engine
+    ) -> None:
+        """DuckDB reports no labels, so a hand-written ``label=`` cannot have drifted."""
+        committed = committed_from_warehouse(annotated_engine, "annotated")
+        labelled = self.with_metadata(
+            committed, "country", label="Country", synonyms=("nation", "land")
+        )
+
+        row = row_named(check_view(annotated_engine, "annotated", labelled), "country")
+
+        assert row.status == STATUS_MATCH, row.detail
+
+    def test_a_label_is_compared_where_the_backend_reads_one(
+        self, annotated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            type(annotated_engine),
+            "introspected_metadata",
+            frozenset({"description", "label", "synonyms"}),
+        )
+        committed = committed_from_warehouse(annotated_engine, "annotated")
+        labelled = self.with_metadata(
+            committed, "country", label="Country", synonyms=("nation", "land")
+        )
+
+        row = row_named(check_view(annotated_engine, "annotated", labelled), "country")
+
+        assert row.status == STATUS_DRIFT
+        assert "label" in row.detail
+
+    def test_an_engine_that_reads_no_metadata_compares_none(
+        self, annotated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The default for a custom engine: nothing it does not read can drift."""
+        monkeypatch.setattr(type(annotated_engine), "introspected_metadata", frozenset())
+        committed = committed_from_warehouse(annotated_engine, "annotated")
+        bare = self.with_metadata(committed, "revenue")
+
+        report = check_view(annotated_engine, "annotated", bare)
+
+        assert report.has_drift is False, report
+
+    def test_a_changed_view_description_is_drift_on_the_report(
+        self, annotated_engine: Engine
+    ) -> None:
+        import dataclasses
+
+        committed = committed_from_warehouse(annotated_engine, "annotated")
+        stale = dataclasses.replace(committed, description="Old words")
+
+        report = check_view(annotated_engine, "annotated", stale)
+
+        assert {row.status for row in report.rows} == {STATUS_MATCH}
+        assert report.has_drift is True
+        assert "Old words" in report.detail and "Sales by country" in report.detail
+
+    def test_a_model_written_with_docstrings_still_matches(
+        self, annotated_engine: Engine, tmp_path: pathlib.Path
+    ) -> None:
+        """Codegen wrote descriptions as attribute docstrings before ``description=``."""
+        from semolina.codegen.model_reader import read_committed_model
+
+        path = tmp_path / "models.py"
+        path.write_text(
+            "from semolina import Dimension, Metric, SemanticView\n"
+            "\n"
+            "\n"
+            "class Annotated(SemanticView, view='annotated', description='Sales by country'):\n"
+            "    country = Dimension[str](synonyms=('nation', 'land'))\n"
+            "    revenue = Metric[float | None](synonyms=('sales',))\n"
+            '    """Gross revenue"""\n',
+            encoding="utf-8",
+        )
+        committed = read_committed_model(path)[0]
+
+        assert committed.fields["revenue"].metadata["description"] == "Gross revenue"
+        assert check_view(annotated_engine, "annotated", committed).has_drift is False

@@ -210,28 +210,22 @@ class TestReverseCodegenOutput:
         assert result.exit_code == 0
         assert "from semolina import Dimension, Fact, Metric, SemanticView" in result.output
 
-    def test_field_with_description_emits_docstring(self) -> None:
-        """Field with a description produces an inline docstring in the output."""
+    def test_field_with_description_emits_the_description_argument(self) -> None:
+        """A field's description is written as ``description=``."""
         mock_engine = make_mock_engine([DESCRIBED_VIEW])
         with patch("semolina.cli.codegen._resolve_backend", return_value=mock_engine):
             result = runner.invoke(app, ["codegen", "my_schema.orders", "--backend", "snowflake"])
         assert result.exit_code == 0
-        assert '"""Total revenue"""' in result.output
+        assert 'description="Total revenue",' in result.output
 
-    def test_field_without_description_no_docstring(self) -> None:
-        """Field with an empty description does not emit a docstring."""
+    def test_field_without_description_keeps_the_one_line_form(self) -> None:
+        """A field with an empty description gets no ``description=`` and no docstring."""
         mock_engine = make_mock_engine([DESCRIBED_VIEW])
         with patch("semolina.cli.codegen._resolve_backend", return_value=mock_engine):
             result = runner.invoke(app, ["codegen", "my_schema.orders", "--backend", "snowflake"])
         assert result.exit_code == 0
-        # country has no description; the only triple-quotes should be for revenue
-        lines = result.output.splitlines()
-        country_idx = next(
-            i for i, line in enumerate(lines) if "country = Dimension[str]()" in line
-        )
-        # The line after country assignment must NOT be a docstring
-        next_line = lines[country_idx + 1].strip() if country_idx + 1 < len(lines) else ""
-        assert not next_line.startswith('"""')
+        assert "    country = Dimension[str]()\n" in result.output
+        assert '"""' not in result.output.split("class ", 1)[1]
 
     def test_todo_comment_for_unresolved_type(self) -> None:
         """Field with data_type starting 'TODO:' emits a # TODO: comment."""
@@ -2047,6 +2041,27 @@ def _render_to_text(report: ViewCheckReport, *, width: int = 200) -> str:
     with patch("semolina.cli.codegen._stderr", console):
         _render_check_report(report)
     return buffer.getvalue()
+
+
+class TestCheckReportPrintsViewDetail:
+    """Drift in the view's own metadata has no row, so it is printed under the table."""
+
+    def test_the_view_detail_is_printed(self) -> None:
+        report = ViewCheckReport(
+            view_name="v",
+            rows=[],
+            has_drift=True,
+            detail="description: committed 'old', warehouse 'new'",
+        )
+
+        output = _render_to_text(report)
+
+        assert "(view): description: committed 'old', warehouse 'new'" in output
+
+    def test_no_view_detail_prints_nothing_for_the_view(self) -> None:
+        report = ViewCheckReport(view_name="v", rows=[], has_drift=False)
+
+        assert "(view)" not in _render_to_text(report)
 
 
 class TestCheckReportIsNotParsedAsMarkup:
