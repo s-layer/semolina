@@ -520,6 +520,8 @@ typo would read as your bug.
            status_code=500, detail="Internal error"
        )
    except SemolinaSpecError as exc:
+       # Only raised when the query is built from request data
+       # with semolina.spec, such as build_query(Sales, body).
        raise HTTPException(status_code=400, detail=str(exc))
    except SemolinaError:
        logger.exception("Semolina refused the query")

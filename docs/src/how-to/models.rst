@@ -548,5 +548,5 @@ See also
 - :ref:`howto-queries` -- use your model to build and execute queries
 - :ref:`howto-filtering` -- filter queries with field operators
 - :ref:`howto-codegen` -- generate models from existing warehouse views
-- :ref:`howto-codegen-check` -- check a committed model for annotation drift
+- :ref:`howto-codegen-check` -- check a committed model for drift from the warehouse
 - :ref:`explanation-type-fidelity` -- which Python type each warehouse column arrives as

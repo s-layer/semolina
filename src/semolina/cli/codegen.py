@@ -958,10 +958,10 @@ def codegen(
         typer.Option(
             "--check",
             help=(
-                "Report whether a committed model's annotations still match the warehouse's "
-                "current result schema. Writes nothing to stdout; exits 5 on drift, or 6 "
-                "when a view's probe failed and it compared against warehouse metadata. "
-                "Reads the file --output names."
+                "Report whether a committed model still matches the warehouse: its "
+                "annotations, roles, columns and metadata arguments. Writes nothing to "
+                "stdout; exits 5 on drift, or 6 when a view's probe failed and it compared "
+                "against warehouse metadata. Reads the file --output names."
             ),
         ),
     ] = False,

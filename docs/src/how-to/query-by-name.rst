@@ -244,6 +244,9 @@ declared as a ``date`` or ``datetime``, with only the grains its type allows: ``
 through ``day`` for a ``date``. A filter leaf names the base field, as
 :ref:`howto-time-grain` explains.
 
+To look up a single field, use :py:func:`~semolina.spec.field_by_name`. It returns the same
+descriptor as attribute access, so ``field_by_name(Sales, "revenue") is Sales.revenue``.
+
 Build part of a query
 ---------------------
 
@@ -273,9 +276,6 @@ so you pass it to ``.where()`` yourself:
 
 It raises ``SemolinaSpecError`` for the same mistakes in the filter that ``build_query()``
 does.
-
-To look up a single field, use :py:func:`~semolina.spec.field_by_name`. It returns the same
-descriptor as attribute access, so ``field_by_name(Sales, "revenue") is Sales.revenue``.
 
 See also
 --------
