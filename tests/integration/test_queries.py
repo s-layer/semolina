@@ -617,7 +617,9 @@ def test_revenue_by_timestamp_grain(backend_engine: Any, unit: str) -> None:  # 
     The oracle (``orders.truncate``) is written from the calendar, so a backend that
     started weeks on Sunday, or a grain that cut at the wrong boundary, changes a total. A
     day or coarser must come back as ``date`` on both backends, a finer grain as
-    ``datetime``.
+    ``datetime``. Snowflake returns ``TIMESTAMP_NTZ`` as Arrow ``timestamp[ns]``, which
+    ``fetchall()`` gives as ``pandas.Timestamp``, a ``datetime`` subclass; that still
+    meets the promise, so the finer grains are checked with ``isinstance``.
     """
     period = Orders.ordered_at.grain(unit)  # pyright: ignore[reportArgumentType]
     cursor = (
@@ -633,8 +635,10 @@ def test_revenue_by_timestamp_grain(backend_engine: Any, unit: str) -> None:  # 
     finally:
         cursor.close()
     assert rows == expected_by_grain(unit)
-    want = datetime.date if period.result_is_date else datetime.datetime
-    assert all(type(value) is want for _, value in rows), rows
+    if period.result_is_date:
+        assert all(type(value) is datetime.date for _, value in rows), rows
+    else:
+        assert all(isinstance(value, datetime.datetime) for _, value in rows), rows
 
 
 @pytest.mark.parametrize("unit", ["year", "quarter", "month", "week", "day"])
@@ -670,7 +674,7 @@ def test_grain_beside_its_base_and_filtered_by_it(backend_engine: Any) -> None: 
         .using("test")
         .metrics(Orders.revenue)
         .dimensions(week)
-        .where(Orders.ordered_at >= datetime.datetime(2024, 4, 1))
+        .where(Orders.ordered_at >= datetime.date(2024, 4, 1))
         .order_by(week)
         .execute()
     )
