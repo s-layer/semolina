@@ -30,8 +30,9 @@ app.command(
         "[bold]Exit codes[/bold]\n\n"
         "  [green]0[/green]  Success\n\n"
         "  [yellow]1[/yellow]  Unexpected error, including generated source that does not "
-        "parse or that an installed ruff fails on, or a committed file under "
-        "[bold]--check[/bold] that does not parse\n\n"
+        "parse or that an installed ruff fails on, a committed file under "
+        "[bold]--check[/bold] that does not parse, or S_LAYER_* tags that do not make a "
+        "valid format for their member\n\n"
         # Not "invalid backend": a --check with no file to read also exits 2, and a message
         # naming only the backend sends you looking in the wrong place.
         "  [yellow]2[/yellow]  Invalid option -- an unrecognized or omitted "
@@ -48,14 +49,14 @@ app.command(
         # Yellow, not red: the colour convention here is green for success, yellow for a
         # caller-actionable outcome, red for a warehouse-side failure. Drift is the caller's
         # to fix. This table is duplicated in docs/src/how-to/codegen.rst; the two must agree.
-        "  [yellow]5[/yellow]  Annotation drift -- a committed model no longer matches the "
-        "result schema\n\n"
+        "  [yellow]5[/yellow]  Drift -- a committed model no longer matches the warehouse: "
+        "an annotation, a role, a column or a metadata argument\n\n"
         # 6 means the same as in the codegen-dto table: the warehouse driver failed while
         # describing what was asked for. Built-in engines translate their driver errors, so
         # this is mostly a custom --backend engine's.
-        "  [red]6[/red]  The warehouse driver failed while describing a view -- nothing was "
-        "written -- or [bold]--check[/bold]'s result-schema probe failed and it compared "
-        "against warehouse metadata instead"
+        "  [red]6[/red]  The warehouse driver failed while describing a view, or refused the "
+        "lookup of its S_LAYER_* tags -- nothing was written -- or [bold]--check[/bold]'s "
+        "result-schema probe failed and it compared against warehouse metadata instead"
     ),
 )(codegen)
 

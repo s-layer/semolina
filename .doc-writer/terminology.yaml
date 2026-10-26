@@ -206,6 +206,21 @@ project_terms:
   - canonical: "order term"
     variants: []
     note: "Prose form; `OrderTerm` in code references."
+  - canonical: "S-LAYER block"
+    variants: []
+    note: >-
+      The semantic-format block a field's `semantic_format=` takes (from
+      s-layer-semantic-formats). Tag names are spelled ``S_LAYER_KIND``,
+      ``S_LAYER_SPEC``, ``S_LAYER_LABEL`` or ``S_LAYER_*``; never "S_LAYER block".
+      On DuckDB, say Semolina reads no tags, not that DuckDB has none.
+  - canonical: "time grain"
+    variants: ["grain"]
+    note: "Both fine in prose; `.grain()` / `Dimension.grain` in code."
+  - canonical: "metadata arguments"
+    variants: []
+    note: >-
+      `label=`, `description=`, `synonyms=`, `semantic_format=` on a field, and a
+      model's `description=`.
 
 spelling:
   # Oxford spelling: -ize verbs, -our nouns. Both were mixed before v2.
