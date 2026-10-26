@@ -542,9 +542,10 @@ The run writes nothing to stdout. One table per view goes to stderr:
    │ unit_price │ int               │ int               │ execute-schema │ match  │
    │ country    │ str               │ str               │ execute-schema │ match  │
    │ region     │ str               │ str               │ execute-schema │ match  │
-   │ revenue    │ decimal.Decimal | │ int | None        │ execute-schema │ drift  │
-   │            │ None              │                   │                │        │
-   │ cost       │ int | None        │ int | None        │ execute-schema │ match  │
+   │ revenue    │ int | None        │ decimal.Decimal | │ execute-schema │ drift  │
+   │            │                   │ None              │                │        │
+   │ cost       │ decimal.Decimal | │ decimal.Decimal | │ execute-schema │ match  │
+   │            │ None              │ None              │                │        │
    └────────────┴───────────────────┴───────────────────┴────────────────┴────────┘
 
 The comparison is per field, and the right-hand side is the **result schema** of a
