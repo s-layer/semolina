@@ -24,6 +24,7 @@ from .exceptions import (
     SemolinaMissingDependencyError,
     SemolinaResultConsumedError,
     SemolinaSchemaMismatchError,
+    SemolinaSpecError,
     SemolinaViewNotFoundError,
 )
 from .fields import Dimension, Fact, Field, Metric, NullsOrdering, OrderTerm
@@ -87,6 +88,7 @@ __all__ = [
     "SemolinaMissingDependencyError",
     "SemolinaResultConsumedError",
     "SemolinaSchemaMismatchError",
+    "SemolinaSpecError",
     "SemolinaViewNotFoundError",
     "unregister",
     "unregister_async_engine",

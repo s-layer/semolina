@@ -6,6 +6,17 @@ Changelog
 What changed in each Semolina release. The full history of earlier releases is on the
 `GitHub releases page <https://github.com/s-layer/semolina/releases>`_.
 
+Unreleased
+----------
+
+**Build a query from field names.** :mod:`semolina.spec` builds a query from plain data,
+``{"metrics": ["revenue"], "where": {"field": "region", "op": "eq", "value": "West"}}``,
+for callers that hold names instead of model attributes, such as an agent's tool call or a
+JSON request body. Filters are ``and`` / ``or`` / ``not`` trees over the same operators as
+the field methods. Mistakes raise the new ``SemolinaSpecError`` with the path to the bad
+value, and ``query_spec_schema()`` gives a JSON Schema listing one model's field names, to
+use as a tool's input schema. :ref:`howto-query-by-name` has the details.
+
 0.8.0 (2026-10-19)
 ------------------
 
