@@ -101,11 +101,9 @@ def test_snowflake_introspect_semantic_view(snowflake_engine: Any) -> None:
     """
     SHOW COLUMNS IN VIEW over ADBC, qualified from the session -> IntrospectedView.
 
-    The replay checks the session query and the parsing of the recorded rows, not the
-    ``SHOW COLUMNS`` statement: pytest-adbc-replay 1.1.1 parses with the Snowflake dialect
-    but renders with sqlglot's generic one, which cannot print ``SHOW``, so the statement
-    is stored and matched as an empty string. The exact statement is pinned by
-    ``tests/unit/test_snowflake_engine.py`` and was accepted live when this was recorded.
+    The replay checks the session query, the full ``SHOW COLUMNS IN VIEW`` statement (keyed
+    in full since pytest-adbc-replay 1.2.0) and the parsing of the recorded rows. The exact
+    statement is also pinned by ``tests/unit/test_snowflake_engine.py``.
     """
     view = snowflake_engine.introspect("sales_view")
 

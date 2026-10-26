@@ -31,7 +31,14 @@ Then commit the updated cassette files. Cassettes are matched by normalized SQL,
 so they only need re-recording when the **generated SQL** changes (new/changed
 query) or the **expected data** changes.
 
-Do not edit cassette files by hand.
+Do not edit cassette files by hand. The one exception is the `.sql` key files: when a
+pytest-adbc-replay upgrade changes how SQL is normalised (as 1.2.0 did for Snowflake
+`SHOW` and `DESCRIBE SEMANTIC VIEW`), rewrite the keys with its `normalise_sql` instead of
+re-recording, since the recorded results have not changed.
+
+Record mode redacts the result fields listed in `adbc_scrub_result_keys` in
+`pyproject.toml` (Databricks owner and audit fields such as `owner`), so recorded results
+hold `REDACTED` there. This needs pytest-adbc-replay 1.2.0 or later.
 
 ## Copied cassettes
 
