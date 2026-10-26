@@ -538,6 +538,252 @@ class TestDuckDBEngineIntrospectErrors:
         assert "amount" in str(raised.value)
 
 
+class _ScriptedCursor:
+    """
+    A cursor that answers introspection's queries from a script and records them.
+
+    ``DESCRIBE SEMANTIC VIEW`` returns ``describe_rows``; the extension-version query returns
+    ``version``; a ``DESCRIBE SELECT`` probe returns ``probe_types`` for the columns its
+    ``semantic_view()`` call names, so a test can tell a probed type from a described one.
+    """
+
+    def __init__(
+        self,
+        describe_rows: list[tuple[str, str, str, str, str]],
+        *,
+        version: str | None,
+        probe_types: dict[str, str],
+    ) -> None:
+        self.describe_rows = describe_rows
+        self.version = version
+        self.probe_types = probe_types
+        self.executed: list[str] = []
+        self._rows: list[tuple[Any, ...]] = []
+
+    @property
+    def probes(self) -> list[str]:
+        """The ``DESCRIBE SELECT`` statements run, in order."""
+        return [sql for sql in self.executed if sql.startswith("DESCRIBE SELECT")]
+
+    def execute(self, sql: str) -> None:
+        import re
+
+        self.executed.append(sql)
+        if sql.startswith("DESCRIBE SEMANTIC VIEW"):
+            self._rows = list(self.describe_rows)
+        elif "duckdb_extensions()" in sql:
+            self._rows = [] if self.version is None else [(self.version,)]
+        elif sql.startswith("DESCRIBE SELECT"):
+            names = re.findall(r"'((?:[^']|'')*)'", sql.split(",", 1)[1])
+            self._rows = []
+            for name in names:
+                column = name.replace("''", "'")
+                if column.startswith('"') and column.endswith('"'):
+                    column = column[1:-1]
+                self._rows.append((column, self.probe_types[column]))
+        else:  # pragma: no cover - a query introspection does not run
+            msg = f"unexpected SQL: {sql}"
+            raise AssertionError(msg)
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        return self._rows
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        return self._rows[0] if self._rows else None
+
+
+def _member(
+    kind: str, name: str, data_type: str, *, access: str = "PUBLIC"
+) -> list[tuple[str, str, str, str, str]]:
+    """``DESCRIBE SEMANTIC VIEW`` rows for one member, as the extension reports them."""
+    rows = [
+        (kind, name, "o", "TABLE", "o"),
+        (kind, name, "o", "EXPRESSION", f"o.{name}"),
+        (kind, name, "o", "DATA_TYPE", data_type),
+    ]
+    if kind != "DIMENSION":
+        rows.append((kind, name, "o", "ACCESS_MODIFIER", access))
+    return rows
+
+
+def _introspect_scripted(cursor: _ScriptedCursor) -> dict[str, str | None]:
+    """Introspect ``orders`` over ``cursor``; map each field's column to its raw SQL type."""
+    from semolina.engines.duckdb import _introspect_duckdb
+
+    view = _introspect_duckdb(cursor, "orders", described="orders")
+    return {f.source_name or f.name: f.raw_type for f in view.fields}
+
+
+class TestDescribedMemberTypes:
+    """
+    Member types come from ``DESCRIBE SEMANTIC VIEW`` when the extension reports them.
+
+    From ``semantic_views`` v0.14.0 the ``DATA_TYPE`` row carries the type the member's column
+    has in a ``semantic_view()`` query, so the per-view ``DESCRIBE SELECT`` probes are only
+    needed for a member it leaves empty, and for every member on an older extension. The
+    probe answers with types the ``DATA_TYPE`` rows never use, so each assertion shows which
+    source a type came from.
+    """
+
+    _ROWS = (
+        _member("DIMENSION", "region", "VARCHAR")
+        + _member("DIMENSION", '"Order Date"', "DATE")
+        + _member("METRIC", "revenue", "DECIMAL(38,2)")
+        + _member("METRIC", "hidden", "BIGINT", access="PRIVATE")
+        + _member("FACT", "amount", "DECIMAL(10,2)")
+    )
+    _PROBED = {
+        "region": "PROBED_REGION",
+        "Order Date": "PROBED_DATE",
+        "revenue": "PROBED_REVENUE",
+        "hidden": "PROBED_HIDDEN",
+        "amount": "PROBED_AMOUNT",
+    }
+
+    @pytest.mark.parametrize("version", ["v0.14.0", "v0.14.2", "v0.16.0", "v1.0.0", "0.15.1"])
+    def test_a_reporting_extension_is_not_probed(self, version: str) -> None:
+        """Every member is typed by DESCRIBE, quoted names included, with no probe at all."""
+        cursor = _ScriptedCursor(list(self._ROWS), version=version, probe_types=self._PROBED)
+
+        types = _introspect_scripted(cursor)
+
+        assert types == {
+            "region": "VARCHAR",
+            "Order Date": "DATE",
+            "revenue": "DECIMAL(38,2)",
+            "amount": "DECIMAL(10,2)",
+        }
+        assert cursor.probes == []
+
+    @pytest.mark.parametrize(
+        "version",
+        [
+            "v0.13.0",
+            "v0.9.9",
+            "v0.13.99",
+            "4f2e1a9",
+            "",
+            None,
+            "v0.14.0-rc1",
+            "0.14.0-dev",
+            "v0.14.0-3-gdeadbee",
+        ],
+        ids=repr,
+    )
+    def test_an_older_or_unknown_extension_is_probed_whatever_describe_says(
+        self, version: str | None
+    ) -> None:
+        """
+        Before v0.14.0 a DATA_TYPE row is not trusted, even when it is filled in.
+
+        A view stored by a pre-v0.10.0 release carries the type inferred at ``CREATE``, which
+        goes stale once its source column changes; the probe is the only current answer. A
+        version that is not a plain release number (a local build's commit hash, or a
+        pre-release or ``git describe`` suffix on one) is not trusted either.
+        """
+        cursor = _ScriptedCursor(list(self._ROWS), version=version, probe_types=self._PROBED)
+
+        types = _introspect_scripted(cursor)
+
+        assert types == {
+            "region": "PROBED_REGION",
+            "Order Date": "PROBED_DATE",
+            "revenue": "PROBED_REVENUE",
+            "amount": "PROBED_AMOUNT",
+        }
+        assert len(cursor.probes) == 2
+
+    def test_only_members_describe_left_untyped_are_probed(self) -> None:
+        """
+        A member the extension could not type is probed alone, in its own kind's request.
+
+        v0.14.0+ leaves ``DATA_TYPE`` empty for a member whose source no longer binds. The
+        probe for it raises the binder error the user needs, as it did before; the members
+        DESCRIBE did type keep their described types and are not re-queried.
+        """
+        rows = (
+            _member("DIMENSION", "region", "VARCHAR")
+            + _member("METRIC", "revenue", "")
+            + _member("FACT", "amount", "DECIMAL(10,2)")
+        )
+        cursor = _ScriptedCursor(rows, version="v0.14.2", probe_types=self._PROBED)
+
+        types = _introspect_scripted(cursor)
+
+        assert types == {
+            "region": "VARCHAR",
+            "revenue": "PROBED_REVENUE",
+            "amount": "DECIMAL(10,2)",
+        }
+        assert cursor.probes == [
+            "DESCRIBE SELECT * FROM semantic_view('orders', metrics := ['revenue'])"
+        ]
+
+    def test_an_untyped_fact_gets_the_facts_request(self) -> None:
+        """Facts cannot share a request with metrics, so an untyped fact is probed on its own."""
+        rows = _member("DIMENSION", "region", "VARCHAR") + _member("FACT", "amount", "")
+        cursor = _ScriptedCursor(rows, version="v0.14.2", probe_types=self._PROBED)
+
+        types = _introspect_scripted(cursor)
+
+        assert types == {"region": "VARCHAR", "amount": "PROBED_AMOUNT"}
+        assert cursor.probes == [
+            "DESCRIBE SELECT * FROM semantic_view('orders', facts := ['amount'])"
+        ]
+
+    def test_an_untyped_quoted_dimension_is_probed_by_its_described_name(self) -> None:
+        """The probe names the member as DESCRIBE spelled it and reads back the bare column."""
+        rows = _member("DIMENSION", '"Order Date"', "") + _member("METRIC", "revenue", "BIGINT")
+        cursor = _ScriptedCursor(rows, version="v0.16.0", probe_types=self._PROBED)
+
+        types = _introspect_scripted(cursor)
+
+        assert types == {"Order Date": "PROBED_DATE", "revenue": "BIGINT"}
+        assert cursor.probes == [
+            """DESCRIBE SELECT * FROM semantic_view('orders', dimensions := ['"Order Date"'])"""
+        ]
+
+    def test_a_described_type_maps_to_its_python_type(self) -> None:
+        """A described type goes through the same mapping as a probed one."""
+        from semolina.engines.duckdb import _introspect_duckdb
+
+        cursor = _ScriptedCursor(list(self._ROWS), version="v0.14.2", probe_types=self._PROBED)
+
+        view = _introspect_duckdb(cursor, "orders", described="orders")
+
+        data_types = {f.source_name or f.name: f.data_type for f in view.fields}
+        assert data_types == {
+            "region": "str",
+            "Order Date": "datetime.date",
+            "revenue": "decimal.Decimal",
+            "amount": "decimal.Decimal",
+        }
+
+    def test_the_version_query_works_on_the_installed_extension(self, duckdb_engine: Any) -> None:
+        """
+        The real extension answers the version query with a release number.
+
+        Pinned on the version's shape, not its value, so the test holds as the registry's
+        build moves past v0.14.0. A shape the parser cannot read would silently send every
+        introspection back to the probes.
+        """
+        from semolina.engines.duckdb import _EXTENSION_VERSION, _reports_member_types
+
+        with duckdb_engine.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT extension_version FROM duckdb_extensions() "
+                "WHERE extension_name = 'semantic_views'"
+            )
+            (version,) = cursor.fetchone()
+            reports = _reports_member_types(cursor)
+            cursor.close()
+
+        assert _EXTENSION_VERSION.match(version), version
+        release = tuple(int(part) for part in version.removeprefix("v").split(".")[:3])
+        assert reports is (release >= (0, 14, 0))
+
+
 class TestSqlStrLiteral:
     """Test the introspection SQL-string-literal escaping helper."""
 

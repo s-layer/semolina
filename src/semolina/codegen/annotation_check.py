@@ -199,8 +199,8 @@ def _field_groups(view: IntrospectedView, *, split_facts: bool) -> list[list[Int
         group = metrics + dimensions + facts
         return [group] if group else []
 
-    # DuckDB: mirror DuckDBEngine.introspect's two DESCRIBE SELECT statements — dimensions
-    # with metrics in one call, facts alone in the other. `DuckDBSQLBuilder` raises
+    # DuckDB: mirror how DuckDBEngine.introspect groups its DESCRIBE SELECT probes —
+    # dimensions with metrics in one call, facts alone in the other. `DuckDBSQLBuilder` raises
     # ValueError when facts and metrics are both present (engines/sql.py:1234-1240).
     groups = [metrics + dimensions, facts]
     return [group for group in groups if group]

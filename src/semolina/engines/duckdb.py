@@ -3,8 +3,9 @@ DuckDB backend engine for semantic view introspection.
 
 Provides the DuckDBEngine class. Query execution runs through the
 :class:`~semolina.engines.base.Engine` ADBC pool path; this subclass adds
-DuckDB-specific ``introspect()`` (DESCRIBE SEMANTIC VIEW + DESCRIBE SELECT) run
-over the engine's owned ADBC pool. The ``semantic_views`` community extension is
+DuckDB-specific ``introspect()`` (DESCRIBE SEMANTIC VIEW, plus a DESCRIBE SELECT for
+any member whose type the extension does not report) run over the engine's owned ADBC
+pool. The ``semantic_views`` community extension is
 loaded by the pool's ``connect`` event listener (wired in ``create_engine``).
 """
 
@@ -52,6 +53,49 @@ included) and ``semantic_view()`` says ``Semantic view 'x' not found``. A catalo
 is not the extension's catalog gets ``'x' names database 'y', but semantic views are
 single-catalog``: no view by that name can exist there, so it counts as missing too.
 """
+
+
+_MEMBER_TYPES_SINCE = (0, 14, 0)
+"""
+The first ``semantic_views`` release whose ``DESCRIBE SEMANTIC VIEW`` reports each member's type.
+
+From v0.14.0 the extension works out a member's ``DATA_TYPE`` when the command runs, as the
+type its column has in a ``semantic_view()`` query. Before it, the row is empty for every view
+created since v0.10.0, and a view stored by an older release can carry a type inferred at
+``CREATE`` that no longer matches its source, so those versions are always probed.
+"""
+
+_EXTENSION_VERSION = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
+
+_EXTENSION_VERSION_SQL = (
+    "SELECT extension_version FROM duckdb_extensions() "
+    "WHERE extension_name = 'semantic_views' AND loaded"
+)
+"""The catalogue query that reads the loaded ``semantic_views`` extension's version."""
+
+
+def _reports_member_types(cursor: Any) -> bool:
+    """
+    Say whether the loaded ``semantic_views`` extension reports member types in ``DESCRIBE``.
+
+    Args:
+        cursor: An open ADBC cursor on a DuckDB connection with the extension loaded.
+
+    Returns:
+        ``True`` when the extension's version is at least :data:`_MEMBER_TYPES_SINCE`.
+        ``False`` for an older release, and for a version that is not a plain release number
+        (a local build reports its commit hash; a pre-release or ``git describe`` version
+        carries a suffix and may predate the feature), so an unknown build is probed rather
+        than trusted.
+    """
+    cursor.execute(_EXTENSION_VERSION_SQL)
+    row = cursor.fetchone()
+    if row is None or row[0] is None:
+        return False
+    match = _EXTENSION_VERSION.fullmatch(row[0])
+    if match is None:
+        return False
+    return tuple(int(part) for part in match.groups()) >= _MEMBER_TYPES_SINCE
 
 
 def _to_pascal_case(view_name: str) -> str:
@@ -162,26 +206,39 @@ def _introspect_duckdb(cursor: Any, view_name: str, *, described: str) -> Intros
         if props["kind"] == "fact" and props.get("access_modifier") != "PRIVATE"
     ]
 
-    # Step 2: Get types from DESCRIBE SELECT ... FROM semantic_view()
+    # Step 2: Take each member's type from DESCRIBE's DATA_TYPE row where the extension
+    # reports one, and probe `DESCRIBE SELECT * FROM semantic_view(...)` for the rest.
     type_map: dict[str, str] = {}
+    if _reports_member_types(cursor):
+        for described_name in (*dims, *public_metrics, *public_facts):
+            reported = parsed[described_name].get("data_type", "")
+            if reported:
+                type_map[_unquote_identifier(described_name)] = reported
+
+    def untyped(names: list[str]) -> list[str]:
+        return [n for n in names if _unquote_identifier(n) not in type_map]
 
     view_literal = _sql_str_literal(view_name)
 
-    if dims or public_metrics:
+    probe_dims = untyped(dims)
+    probe_metrics = untyped(public_metrics)
+    probe_facts = untyped(public_facts)
+
+    if probe_dims or probe_metrics:
         parts: list[str] = []
-        if dims:
-            dim_list = "[" + ", ".join(_sql_str_literal(n) for n in dims) + "]"
+        if probe_dims:
+            dim_list = "[" + ", ".join(_sql_str_literal(n) for n in probe_dims) + "]"
             parts.append(f"dimensions := {dim_list}")
-        if public_metrics:
-            metric_list = "[" + ", ".join(_sql_str_literal(n) for n in public_metrics) + "]"
+        if probe_metrics:
+            metric_list = "[" + ", ".join(_sql_str_literal(n) for n in probe_metrics) + "]"
             parts.append(f"metrics := {metric_list}")
         sql = f"DESCRIBE SELECT * FROM semantic_view({view_literal}, {', '.join(parts)})"
         cursor.execute(sql)
         for row in cursor.fetchall():
             type_map[row[0]] = row[1]
 
-    if public_facts:
-        fact_list = "[" + ", ".join(_sql_str_literal(n) for n in public_facts) + "]"
+    if probe_facts:
+        fact_list = "[" + ", ".join(_sql_str_literal(n) for n in probe_facts) + "]"
         sql = f"DESCRIBE SELECT * FROM semantic_view({view_literal}, facts := {fact_list})"
         cursor.execute(sql)
         for row in cursor.fetchall():
@@ -272,11 +329,12 @@ class DuckDBEngine(Engine):
     Built by :func:`semolina.config.create_engine` from a ``DuckDBConfig``; it
     owns one ADBC connection pool (via adbc-poolhouse) whose ``connect`` event
     loads the ``semantic_views`` community extension. Introspection runs over a
-    pooled ADBC connection with a two-step approach:
+    pooled ADBC connection:
 
     1. ``DESCRIBE SEMANTIC VIEW`` for field names, kinds, access modifiers,
-       and comments.
-    2. ``DESCRIBE SELECT * FROM semantic_view(...)`` for resolved SQL types.
+       comments and, from extension v0.14.0, each member's SQL type.
+    2. ``DESCRIBE SELECT * FROM semantic_view(...)`` for the SQL types of any
+       members step 1 left untyped: every member on an older extension.
 
     Query execution runs through the :class:`~semolina.engines.base.Engine`
     pool path (``execute()``).
@@ -306,11 +364,16 @@ class DuckDBEngine(Engine):
         Uses a two-step approach:
 
         1. ``DESCRIBE SEMANTIC VIEW {name}`` to discover field names, kinds
-           (DIMENSION/METRIC/FACT), access modifiers (PUBLIC/PRIVATE), and
-           comments. Note: DATA_TYPE is always empty in current DuckDB.
-        2. ``DESCRIBE SELECT * FROM semantic_view(...)`` to resolve actual
-           SQL types for each field. Separate queries are issued for
-           dimensions+metrics vs facts.
+           (DIMENSION/METRIC/FACT), access modifiers (PUBLIC/PRIVATE),
+           comments and SQL types. The ``semantic_views`` extension reports a
+           member's ``DATA_TYPE`` from v0.14.0; older releases leave it empty
+           for any view created since v0.10.0, so their types are not used.
+        2. ``DESCRIBE SELECT * FROM semantic_view(...)`` to resolve the SQL
+           type of each member step 1 left untyped: all of them on an older
+           extension, and on a newer one only a member the extension could not
+           type (its source no longer binds, so the probe raises the binder
+           error). Separate queries are issued for dimensions+metrics vs
+           facts, and none when every member is typed.
 
         PRIVATE metrics and facts are excluded from the output (they cannot
         be queried directly). Dimensions do not have access modifiers and

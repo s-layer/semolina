@@ -4,12 +4,18 @@ Shared fixtures for the codegen test package.
 Holds the data-fetch guard both ``test_annotation_check.py`` and ``test_cli.py`` use to make
 ``--check``'s "without executing a query for rows" runnable.
 """
+# Test-only: the guard allows DuckDB introspection's version query by its exact text, which
+# lives in a private constant of the engine module. Scope-disable the private-access rule
+# that triggers (intentionally not a `# type: ignore`).
+# pyright: reportPrivateUsage=false
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
 import pytest
+
+from semolina.engines.duckdb import _EXTENSION_VERSION_SQL
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -23,6 +29,15 @@ Statement prefixes whose rows are catalogue metadata, not view data.
 (Databricks), and fetching those rows is what introspection *is* — the generation path has
 always done it. The guarantee is about the view's **data**, so the guard has to draw
 the line here rather than ban ``fetchall`` outright.
+"""
+
+_METADATA_QUERIES = (_EXTENSION_VERSION_SQL,)
+"""
+Exact ``SELECT`` statements that read catalogue metadata, not view data.
+
+DuckDB introspection reads the ``semantic_views`` version from ``duckdb_extensions()`` to
+decide whether ``DESCRIBE SEMANTIC VIEW`` reports member types. It is allowed by exact
+text rather than by a ``SELECT`` prefix, which would let a fetch of view data through.
 """
 
 
@@ -106,7 +121,9 @@ def data_fetch_guard(monkeypatch: pytest.MonkeyPatch) -> None:
         return str(getattr(cursor, "_guarded_statement", "")).lstrip()
 
     def _is_metadata(statement: str) -> bool:
-        return statement.upper().startswith(_METADATA_STATEMENTS)
+        return statement.upper().startswith(_METADATA_STATEMENTS) or (
+            statement in _METADATA_QUERIES
+        )
 
     def guarded(real: Any) -> Callable[..., Any]:
         def fetch(self: Any, *args: Any, **kwargs: Any) -> Any:
