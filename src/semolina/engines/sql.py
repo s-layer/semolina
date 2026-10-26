@@ -45,6 +45,8 @@ from semolina.filters import (
 if TYPE_CHECKING:
     # Only for annotations: a runtime ``Dialect`` here would shadow the module
     # ``__getattr__`` that keeps the old ``engines.sql.Dialect`` name working.
+    from collections.abc import Callable
+
     from semolina.dialect import Dialect
     from semolina.query import Query
 
@@ -331,6 +333,23 @@ class SQLDialect(ABC):
     A Snowflake account that sets ``QUOTED_IDENTIFIERS_IGNORE_CASE = TRUE`` breaks the
     assumption; the backends how-to tells users to leave it off.
     """
+
+    def binds(self, value: Any) -> bool:  # noqa: ARG002
+        """
+        Say whether the driver accepts ``value`` as a bound parameter.
+
+        Consulted for each filter value when :attr:`supports_parameterized_queries` is
+        ``True``: a value the driver refuses is written into the SQL with
+        :meth:`render_literal` instead, and the others stay bound. The default binds
+        everything.
+
+        Args:
+            value: A filter value.
+
+        Returns:
+            ``True`` to bind it, ``False`` to inline its literal.
+        """
+        return True
 
     def render_literal(self, value: Any) -> str:
         """
@@ -623,11 +642,29 @@ class SnowflakeDialect(SQLDialect):
         """Return ? placeholder for the Snowflake ADBC driver (qmark paramstyle)."""
         return "?"
 
+    def binds(self, value: Any) -> bool:
+        """
+        Refuse to bind a date, datetime or time: the Snowflake ADBC driver rejects them.
+
+        It fails such a parameter at execute time with ``NOT_IMPLEMENTED: Unsupported bind
+        param type date32`` (``timestamp[us]``, ``time64[us]`` likewise), so these values
+        are written as the literals :meth:`render_literal` gives, which ``to_sql()`` already
+        shows.
+
+        Args:
+            value: A filter value.
+
+        Returns:
+            ``False`` for a ``datetime.date``, ``datetime.datetime`` or ``datetime.time``.
+        """
+        return not isinstance(value, datetime.date | datetime.time)
+
     def render_literal(self, value: Any) -> str:
         r"""
         Render a Python value as a Snowflake SQL literal.
 
-        Snowflake binds its values, so this renders only what ``to_sql()`` shows. A Snowflake
+        Snowflake binds most values, so this renders what ``to_sql()`` shows and the date,
+        timestamp and time values :meth:`binds` refuses. A Snowflake
         single-quoted string reads the backslash as an escape, so a string's backslashes are
         doubled before the standard rendering doubles its quotes: ``a\b`` is ``'a\\b'``.
 
@@ -1273,8 +1310,9 @@ class SQLBuilder:
             query: Query object to convert to SQL
 
         Returns:
-            Tuple of (sql_template, params_list). The sql_template contains
-            dialect-specific placeholders ('?') instead of literal values.
+            Tuple of (sql_template, params_list). The sql_template has the dialect's
+            placeholder ('?') for each bound value, and the literal for each value
+            :meth:`SQLDialect.binds` refuses, such as a date on Snowflake.
 
         Raises:
             ValueError: If ``order_by()`` names a dimension or fact the query does not select.
@@ -1282,7 +1320,7 @@ class SQLBuilder:
         sql, params = self._build_template(query)
         if not self.dialect.supports_parameterized_queries:
             return self._render_literal_sql(sql, params), []
-        return sql.replace(_SLOT, self.dialect.placeholder), params
+        return self._fill_slots(sql, params, inline=lambda value: not self.dialect.binds(value))
 
     def _build_template(self, query: Query) -> tuple[str, list[Any]]:
         """
@@ -1390,6 +1428,25 @@ class SQLBuilder:
         Raises:
             ValueError: If the placeholder count does not match ``len(params)``.
         """
+        return self._fill_slots(sql_template, params, inline=lambda _value: True)[0]
+
+    def _fill_slots(
+        self, sql_template: str, params: list[Any], *, inline: Callable[[Any], bool]
+    ) -> tuple[str, list[Any]]:
+        """
+        Fill each ``_SLOT`` once: with a value's literal, or with a placeholder that binds it.
+
+        Args:
+            sql_template: SQL string with one ``_SLOT`` per value.
+            params: Parameter values, in slot order.
+            inline: Says whether a value is written as its literal rather than bound.
+
+        Returns:
+            The SQL, and the values left to bind, in placeholder order.
+
+        Raises:
+            ValueError: If the slot count does not match ``len(params)``.
+        """
         segments = sql_template.split(_SLOT)
         placeholder_count = len(segments) - 1
         if placeholder_count != len(params):
@@ -1399,10 +1456,15 @@ class SQLBuilder:
             )
             raise ValueError(msg)
         out = [segments[0]]
+        bound: list[Any] = []
         for segment, param in zip(segments[1:], params, strict=True):
-            out.append(self.dialect.render_literal(param))
+            if inline(param):
+                out.append(self.dialect.render_literal(param))
+            else:
+                out.append(self.dialect.placeholder)
+                bound.append(param)
             out.append(segment)
-        return "".join(out)
+        return "".join(out), bound
 
     def render_inline(self, sql_template: str, params: list[Any]) -> str:
         """

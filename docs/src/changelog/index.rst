@@ -17,6 +17,11 @@ the field methods. Mistakes raise the new ``SemolinaSpecError`` with the path to
 value, and ``query_spec_schema()`` gives a JSON Schema listing one model's field names, to
 use as a tool's input schema. :ref:`howto-query-by-name` has the details.
 
+**Fixed: date and time filters on Snowflake.** A ``.where()`` value that is a ``date``,
+``datetime`` or ``time`` failed at execution on Snowflake with ``Unsupported bind param
+type``, because the Snowflake ADBC driver can't bind those types. Semolina now writes them
+into the SQL as literals and keeps binding everything else.
+
 0.8.0 (2026-10-19)
 ------------------
 
