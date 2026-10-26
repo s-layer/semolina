@@ -1391,14 +1391,12 @@ def render_disagreements(rows: Sequence[FidelityRow], evidence: ProbeEvidence) -
         "would get one of these two wrong whichever width it picked."
     )
     lines += _paragraph(
-        "**The trap this row encodes.** A hand-written "
-        "`SELECT SUM(order_count) FROM type_fidelity_orders` over that same column measures "
-        "`decimal128(38, 0)` and arrives as `decimal.Decimal`, because plain DuckDB sums an "
-        "`INTEGER` into a `HUGEINT`. Through `semantic_view(...)` the extension casts down and "
-        f"the user receives {arrow('total_order_count')} -> {python('total_order_count')}. "
-        "Probing outside `semantic_view(...)` would record a type nobody ever receives, so "
-        "`tests/unit/test_type_fidelity_duckdb.py` asserts both halves and the probe cannot be "
-        "moved onto the wrong path unnoticed."
+        "**What this row encodes.** Plain DuckDB sums an `INTEGER` into a `HUGEINT`, which "
+        "arrives over Arrow as `decimal128(38, 0)`. Since `semantic_views` 0.16.0 a "
+        "`semantic_view(...)` query keeps DuckDB's own result types, so the user receives "
+        f"{arrow('total_order_count')} -> {python('total_order_count')} there too. Earlier "
+        "builds narrowed the sum to `BIGINT`, so a model generated against them annotated this "
+        "metric `int`."
     )
 
     lines += [f"### 4. {DISAGREEMENT_HEADINGS[3]}", ""]

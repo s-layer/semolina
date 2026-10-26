@@ -558,7 +558,8 @@ class TestFactsAndMetricsAreTwoProbes:
         ]
         # The fact comes from the second probe, the metrics from the first.
         assert row_named(report, "unit_price").probed == "int"
-        assert row_named(report, "revenue").probed == "int | None"
+        # SUM over an INTEGER column is a HUGEINT, which arrives as decimal128(38, 0).
+        assert row_named(report, "revenue").probed == "decimal.Decimal | None"
         assert {r.route for r in report.rows} == {ROUTE_EXECUTE_SCHEMA}
 
     def test_each_group_reports_the_route_that_answered_it(

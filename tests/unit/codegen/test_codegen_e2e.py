@@ -96,7 +96,8 @@ def test_codegen_names_import_named_views_clear_of_the_imports(tmp_path: Path) -
         conn.execute("CREATE TABLE t (id INTEGER, revenue INTEGER, country VARCHAR)")
         for name in ("metric", "any"):
             conn.execute(
-                f"CREATE SEMANTIC VIEW {name} AS TABLES (s AS t PRIMARY KEY (id)) "
+                # Quoted: DuckDB 2.0's parser reserves ``any``.
+                f'CREATE SEMANTIC VIEW "{name}" AS TABLES (s AS t PRIMARY KEY (id)) '
                 "DIMENSIONS (s.country AS country) METRICS (s.revenue AS SUM(s.revenue))"
             )
     finally:

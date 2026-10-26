@@ -239,7 +239,7 @@ cancellation you need to see.
 .. note::
 
    Aborting a ``semantic_view()`` query on DuckDB needs the ``semantic_views`` community
-   extension at 0.12.0 or newer, which is what the pinned ``duckdb==1.5.6`` in the
+   extension at 0.12.0 or newer, which is what the pinned ``duckdb==2.0.0`` in the
    ``semolina[duckdb]`` extra installs. Builds below that floor evaluated the inner query on a
    separate client context, where DuckDB's per-context interrupt flag was never read, so a
    cancelled aggregate finished its work first and only then reported the interrupt.

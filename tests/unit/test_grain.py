@@ -339,24 +339,6 @@ class TestSQL:
         assert "WHERE \"ORDERED_AT\" >= DATE '2024-01-01'\nGROUP BY ALL" in sql
 
 
-def _duckdb_supports_expression_dimensions() -> bool:
-    """Whether the installed ``semantic_views`` extension takes expression dimensions."""
-    duckdb = pytest.importorskip("duckdb")
-    from duckdb_extension import load_semantic_views
-
-    conn = duckdb.connect()
-    try:
-        load_semantic_views(conn)
-        conn.execute("CREATE TABLE t (id INTEGER, d DATE)")
-        conn.execute("CREATE SEMANTIC VIEW v AS TABLES (t PRIMARY KEY (id)) DIMENSIONS (t.d AS d)")
-        conn.execute("SELECT * FROM semantic_view('v', dimensions := ['year(d) AS y'])")
-    except duckdb.Error:
-        return False
-    finally:
-        conn.close()
-    return True
-
-
 def _create_orders(dbapi_conn: Any, _connection_record: Any) -> None:
     """Create ``orders_data`` and ``orders_view`` on the pool's first connection."""
     from orders import orders_values_sql
@@ -383,17 +365,14 @@ class TestDuckDBExecution:
     """
     Grain queries run on DuckDB and match the calendar oracle.
 
-    duckdb-semantic-views took expression dimensions in 0.16.0, which needs DuckDB 2.0.
-    Semolina pins DuckDB 1.5.6, for which the community registry serves 0.13.0, so these
-    tests skip until the duckdb-extension-check workflow moves the pin. They were run
-    against a local 0.16.0 build when the grain API was added.
+    duckdb-semantic-views took expression dimensions in 0.16.0, which needs DuckDB 2.0, the
+    version Semolina pins. They run rather than skip, so a pin that lost expression
+    dimensions fails here.
     """
 
     @pytest.fixture
     def orders_engine(self) -> Any:
         """An in-memory engine holding ``orders_data`` and ``orders_view``."""
-        if not _duckdb_supports_expression_dimensions():
-            pytest.skip("installed semantic_views extension predates expression dimensions")
         from adbc_poolhouse import DuckDBConfig, close_pool
         from sqlalchemy import event
 

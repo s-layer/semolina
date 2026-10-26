@@ -14,6 +14,8 @@
 # ---
 # name: test_codegen_file_backed_duckdb
   '''
+  import decimal
+  
   from semolina import Dimension, Fact, Metric, SemanticView
   
   
@@ -21,8 +23,10 @@
       unit_price = Fact[int]()
       country = Dimension[str]()
       region = Dimension[str]()
-      revenue = Metric[int | None]()
-      cost = Metric[int | None]()
+      # HUGEINT
+      revenue = Metric[decimal.Decimal | None]()
+      # HUGEINT
+      cost = Metric[decimal.Decimal | None]()
   
   '''
 # ---
