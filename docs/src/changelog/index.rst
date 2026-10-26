@@ -6,8 +6,8 @@ Changelog
 What changed in each Semolina release. The full history of earlier releases is on the
 `GitHub releases page <https://github.com/s-layer/semolina/releases>`_.
 
-Unreleased
-----------
+0.9.0 (2026-10-26)
+------------------
 
 **Build a query from field names.** :mod:`semolina.spec` builds a query from plain data,
 ``{"metrics": ["revenue"], "where": {"field": "region", "op": "eq", "value": "West"}}``,
@@ -21,8 +21,9 @@ use as a tool's input schema. :ref:`howto-query-by-name` has the details.
 dimension rolled up to a year, quarter, month, week, day, hour, minute or second, in a
 column named ``ordered_at__week``. Every backend returns a ``date`` for a day or coarser and
 a ``datetime`` below that, and weeks start on Monday, whatever Snowflake's ``WEEK_START``
-says. On DuckDB it needs ``semantic_views`` 0.16.0 or later. :ref:`howto-time-grain` has
-the details.
+says. On DuckDB it needs ``semantic_views`` 0.16.0 or later, which runs on DuckDB 2.0, so
+it doesn't run with the DuckDB 1.5.6 that the ``duckdb`` extra pins. :ref:`howto-time-grain`
+has the details.
 
 **Describe your fields.** ``Metric``, ``Dimension`` and ``Fact`` take ``label=``,
 ``description=``, ``synonyms=`` and ``semantic_format=``, and a model takes

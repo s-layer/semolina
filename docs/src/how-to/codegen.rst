@@ -114,10 +114,12 @@ Use ``--backend`` (or ``-b``):
      - Introspects via
    * - ``snowflake``
      - Snowflake semantic views
-     - ``SHOW COLUMNS IN VIEW``
+     - ``SHOW COLUMNS IN VIEW``, then ``DESCRIBE SEMANTIC VIEW`` and one
+       ``TAG_REFERENCES`` query for the metadata
    * - ``databricks``
      - Databricks metric views
-     - ``DESCRIBE TABLE EXTENDED AS JSON``
+     - ``DESCRIBE TABLE EXTENDED AS JSON``, then the catalog's
+       ``information_schema.column_tags``
    * - ``duckdb``
      - DuckDB semantic views
      - ``DESCRIBE SEMANTIC VIEW``
@@ -380,6 +382,12 @@ Understand the generated output
              revenue = Metric[int | None]()
              cost = Metric[int | None]()
 
+These views carry no comments or synonyms, so each field is a bare constructor call. Where
+the warehouse records a comment, synonyms, a display name or ``S_LAYER_*`` tags, codegen
+writes them as the field's ``description=``, ``synonyms=``, ``label=`` and
+``semantic_format=`` arguments, one per line, and the view's own comment as the class's
+``description=``. :ref:`howto-models-metadata` lists what each backend records.
+
 Every column gets a concrete field type. Codegen reads the role each backend
 records for the column and emits the matching :py:class:`~semolina.fields.Metric`,
 :py:class:`~semolina.fields.Dimension`, or :py:class:`~semolina.fields.Fact`. None of
@@ -596,12 +604,12 @@ Each moves the row to ``drift`` and prints a line under the table naming what mo
    Detail: country: column: committed 'OLD_NAME', warehouse 'NEW_NAME'
    Detail: revenue: synonyms: committed ('sales',), warehouse ('sales', 'turnover')
 
-Only what the backend records is compared (see :ref:`howto-models-metadata`). DuckDB
-records no label or format, so a ``label=`` or ``semantic_format=`` you added there is
-never drift. Formats compare by meaning rather than by spelling. Synonyms compare as a set, so their order
-doesn't matter. The model's own ``description=`` is compared with the view's comment, and
-a difference prints as ``Detail: (view): description: ...`` and makes the run exit ``5``
-even when every row matches.
+Only what the backend records is compared (see :ref:`howto-models-metadata`). Semolina
+reads no label or format on DuckDB, so a ``label=`` or ``semantic_format=`` you added
+there is never drift. Formats compare by meaning rather than by spelling. Synonyms compare
+as a set, so their order doesn't matter. The model's own ``description=`` is compared
+with the view's comment, and a difference prints as ``Detail: (view): description: ...``
+and makes the run exit ``5`` even when every row matches.
 
 The column comparison is on the name the query will use, so adding
 ``source="COUNTRY"`` to a field the dialect already resolves to ``COUNTRY`` is not drift.
@@ -626,6 +634,11 @@ name through the file's own imports:
 - ``view=`` can name a string constant, in the same file or imported from another module.
 - Fields inherited from a base class count as the subclass's own, whether the base sits
   in the same file or in another module of your project.
+- Metadata arguments (``label=``, ``description=``, ``synonyms=``,
+  ``semantic_format=``, and the class's ``description=``) are read as literal values or,
+  for a string, as a constant by name. A list or set of synonyms reads the same as a
+  tuple. An argument the reader can't evaluate, such as a function call, is named in a
+  warning and left out of the comparison.
 - An attribute you renamed reads the same column if its ``source=`` says so:
   ``sales_region = Dimension[str](source="region")`` answers for the warehouse's
   ``region``, and a ``Detail`` line names the attribute.
@@ -654,7 +667,8 @@ the line and the statement:
 A field skipped that way reads as absent, so the warning tells you why its row drifted.
 Warnings cover a field declared inside an ``if`` block or a tuple assignment, a
 constructor whose name doesn't resolve to ``Metric``, ``Dimension`` or ``Fact``, a
-``source=`` or ``view=`` that isn't a string, and a base class that can't be found.
+``source=`` or ``view=`` that isn't a string, a metadata argument the reader can't
+evaluate, and a base class that can't be found.
 
 Know what ``--check`` does not catch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -678,7 +692,8 @@ These are deliberate limits rather than bugs:
 Interpret the exit code
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-``0`` means every annotation matched. ``5`` means at least one drifted. ``6`` means the
+``0`` means every field matched. ``5`` means at least one drifted: an annotation, a
+role, a column or a metadata argument, or the model's own ``description=``. ``6`` means the
 result-schema probe failed for a view and its rows fell back to the catalogue, so treat
 the run as not checked. ``6`` wins over ``5``; when another view's probe did run and
 found drift, stderr names that view so the drift isn't lost. A committed file that
@@ -730,8 +745,9 @@ Exit codes
      - Success -- model class written to stdout or to the ``--output`` file
    * - ``1``
      - Unexpected error (see stderr for details), including an unparseable
-       committed file, generated source that does not parse, or an installed ruff
-       that fails on it. Nothing is written to stdout
+       committed file, generated source that does not parse, an installed ruff
+       that fails on it, or ``S_LAYER_*`` tags that don't make a valid format for
+       their member (see :ref:`howto-models-metadata`). Nothing is written to stdout
    * - ``2``
      - Invalid option -- an unrecognized or omitted ``--backend``, connection
        config that could not be assembled (the message names the fields, never
@@ -751,10 +767,12 @@ Exit codes
        (:py:exc:`~semolina.exceptions.SemolinaConnectionError`). Credentials that are
        missing altogether exit ``2``
    * - ``5``
-     - Annotation drift -- a committed model no longer matches the result schema
+     - Drift -- a committed model no longer matches the warehouse: an annotation, a
+       role, a column or a metadata argument (see `Read the Detail lines`_)
    * - ``6``
      - The warehouse was reached but could not describe a view, for example because a
-       column its definition reads has been dropped
+       column its definition reads has been dropped, or it refused the lookup of the
+       view's ``S_LAYER_*`` tags
        (:py:exc:`~semolina.exceptions.SemolinaIntrospectionError`), or a custom engine
        let a raw driver error through. ``codegen-dto`` uses the same code. Under
        ``--check``, also: the result-schema probe failed and at least one row was

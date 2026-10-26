@@ -42,7 +42,7 @@ planned.
 Where the catalogue and the result disagree
 -------------------------------------------
 
-Measured against DuckDB 1.5.5 with the ``semantic_views`` extension, over a
+Measured against DuckDB 1.5.6 with the ``semantic_views`` extension, over a
 table whose ``order_total`` column is ``DECIMAL(10, 2)`` and whose
 ``order_count`` column is ``INTEGER``:
 

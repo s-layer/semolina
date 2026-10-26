@@ -404,6 +404,8 @@ See :ref:`howto-connection-pools` for sizing the pool so this stays rare.
    :py:meth:`Engine.introspect() <semolina.engines.base.Engine.introspect>` raises it, for
    :ref:`howto-codegen`, so nothing on the query path does.
 
+.. _howto-web-api-errors:
+
 Catch Semolina's own errors in one place
 ----------------------------------------
 
@@ -424,6 +426,13 @@ be reached.
 Each error also keeps the base class it had before ``SemolinaError`` existed: three of the
 four above are still :py:class:`RuntimeError`, and the unregistered engine is still
 :py:class:`ValueError`. An ``except`` clause written for an earlier release keeps matching.
+
+One ``SemolinaError`` is the client's fault.
+:py:exc:`~semolina.exceptions.SemolinaSpecError` comes from building a query out of field
+names and plain data with :mod:`semolina.spec` (see :ref:`howto-query-by-name`), and it
+means the request named a field the model doesn't have or sent data of the wrong shape.
+Answer it with a ``400`` and its message, which names the bad value and what to send
+instead. It is also a :py:class:`ValueError`.
 
 Mistakes in how a query is built, such as passing a string to ``.limit()`` or a dimension to
 ``.metrics()``, raise the builtin :py:class:`TypeError` or :py:class:`ValueError` instead.
@@ -451,6 +460,9 @@ Put together, each failure maps to one status:
      - ``503`` or ``500``
      - The warehouse rejected the statement. ``500`` unless you have observed which
        subclasses your driver raises for transient failures
+   * - :py:exc:`~semolina.exceptions.SemolinaSpecError`
+     - ``400``
+     - The request's query data names an unknown field or has the wrong shape
    * - Any other :py:exc:`~semolina.exceptions.SemolinaError`
      - ``500``
      - Your service is misconfigured or has a bug
@@ -464,6 +476,8 @@ lands there too. The order matters at the end:
 :py:exc:`~semolina.exceptions.SemolinaEngineNotRegisteredError` is also a
 :py:class:`ValueError`, so ``except SemolinaError`` has to come before
 ``except (TypeError, ValueError)`` or a missing engine would read as the client's fault.
+``except SemolinaSpecError`` has to come before ``except SemolinaError``, or a client's
+typo would read as your bug.
 
 .. code-block:: python
 
@@ -473,7 +487,11 @@ lands there too. The order matters at the end:
    from fastapi import HTTPException
    from sqlalchemy.exc import TimeoutError as PoolTimeout
 
-   from semolina import SemolinaConnectionError, SemolinaError
+   from semolina import (
+       SemolinaConnectionError,
+       SemolinaError,
+       SemolinaSpecError,
+   )
 
    logger = logging.getLogger(__name__)
 
@@ -501,6 +519,8 @@ lands there too. The order matters at the end:
        raise HTTPException(
            status_code=500, detail="Internal error"
        )
+   except SemolinaSpecError as exc:
+       raise HTTPException(status_code=400, detail=str(exc))
    except SemolinaError:
        logger.exception("Semolina refused the query")
        raise HTTPException(

@@ -137,7 +137,7 @@ Each ``op`` calls the field method of the same meaning, so the filtering rules i
 example, which is why the ``revenue`` condition above sits at the top of ``where``. A
 dimension filter applies before aggregation and a metric filter after it, so the two can
 only be joined by the list or a top-level ``and``. Combining them under ``or`` or ``not``
-raises ``SemolinaSpecError``.
+raises :py:class:`~semolina.exceptions.SemolinaSpecError`.
 
 .. list-table::
    :header-rows: 1
@@ -186,8 +186,8 @@ string as it was given.
 Report mistakes back to the caller
 ----------------------------------
 
-Every mistake in the data raises :py:class:`~semolina.exceptions.SemolinaSpecError`, which is a
-``ValueError``. Its ``path`` says where the mistake is, and the message says what to write
+Every mistake in the data raises :py:class:`~semolina.exceptions.SemolinaSpecError`, which
+is a ``ValueError``. Its ``path`` says where the mistake is, and the message says what to write
 instead. An unknown name lists the closest field names the model does have:
 
 .. code-block:: python
@@ -202,7 +202,9 @@ instead. An unknown name lists the closest field names the model does have:
        # metrics[0]: Sales has no field 'revnue'. Did you mean 'revenue'? Its fields are ...
 
 The whole query is checked before any SQL is written, so a tool can return the message to
-the model in the same turn and let it try again.
+the model in the same turn and let it try again. In a web handler, answer it with a ``400``,
+and catch it before any ``except SemolinaError`` clause, since it is a ``SemolinaError``
+too: :ref:`howto-web-api-errors` shows the order.
 
 Give a model the schema
 -----------------------
@@ -227,15 +229,50 @@ each filter ``op`` is tied to the ``value`` shape it takes. Use it as a tool's i
        with query.execute() as cursor:
            return [dict(row) for row in cursor.fetchall_rows()]
 
+To type the handler's argument, annotate it with
+:py:class:`~semolina.spec.QuerySpec`, the ``TypedDict`` that ``build_query()`` accepts:
+``def run_tool(arguments: QuerySpec) -> list[dict]``.
+
 Data the schema accepts builds, with three exceptions that JSON Schema can't express:
 ordering by a dimension the query doesn't select, a date string that doesn't parse, and a
 dimension and a metric combined under ``or`` or ``not``. All three still raise
 ``SemolinaSpecError``, so catch it in the tool either way.
 
-Grains work by name too. ``"ordered_at__week"`` in ``dimensions`` or ``order_by`` selects
-``Orders.ordered_at.grain("week")``, and the schema lists those names for every dimension
-declared as a ``date`` or ``datetime``. A filter leaf names the base field, as
+Grains work by name too. ``"sold_on__month"`` in ``dimensions`` or ``order_by`` selects
+``Sales.sold_on.grain("month")``, and the schema lists those names for every dimension
+declared as a ``date`` or ``datetime``, with only the grains its type allows: ``year``
+through ``day`` for a ``date``. A filter leaf names the base field, as
 :ref:`howto-time-grain` explains.
+
+Build part of a query
+---------------------
+
+When your code picks the metrics and dimensions and only the filter comes from outside,
+build the filter alone with :py:func:`~semolina.spec.predicate_from_spec`. It takes the
+same filter data as ``where`` and returns the predicate the field operators would build,
+so you pass it to ``.where()`` yourself:
+
+.. code-block:: python
+
+   from semolina.spec import predicate_from_spec
+
+   region_filter = predicate_from_spec(
+       Sales,
+       {
+           "field": "region",
+           "op": "in",
+           "value": ["West", "East"],
+       },
+   )
+   query = (
+       Sales.query()
+       .metrics(Sales.revenue)
+       .dimensions(Sales.country)
+       .where(region_filter)
+   )
+
+It raises ``SemolinaSpecError`` for the same mistakes in the filter that ``build_query()``
+does.
 
 To look up a single field, use :py:func:`~semolina.spec.field_by_name`. It returns the same
 descriptor as attribute access, so ``field_by_name(Sales, "revenue") is Sales.revenue``.

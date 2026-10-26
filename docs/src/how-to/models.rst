@@ -455,6 +455,32 @@ single home.
 
 Semolina doesn't change your queries based on any of these. They're there for whatever
 reads your models: a BI front end, a docs page, an agent choosing which field to ask for.
+Each one is an attribute of the field, and
+:py:meth:`~semolina.models.SemanticView.metrics` and
+:py:meth:`~semolina.models.SemanticView.dimensions` list a model's fields, so an endpoint
+can serve them beside the data:
+
+.. code-block:: python
+
+   field_info = {
+       field.name: {
+           "label": field.label,
+           "description": field.description,
+           "synonyms": list(field.synonyms),
+           "format": (
+               field.semantic_format.model_dump(
+                   mode="json", exclude_none=True
+               )
+               if field.semantic_format is not None
+               else None
+           ),
+       }
+       for field in Orders.metrics()
+   }
+
+An argument you didn't pass reads as ``None``, or ``()`` for ``synonyms``. A
+``semantic_format`` comes back as an ``SLayerBlock``, which is a Pydantic model, so
+``model_dump()`` turns it into JSON-ready data with the defaults filled in.
 
 Where the warehouse holds them
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -492,10 +518,15 @@ The ``S_LAYER_*`` tags are the ones
 block. Semolina reads only a member's own tags, not ones it inherits from the view or a
 logical table, and rebuilds the block from them. A tag that doesn't make a valid block for
 that kind of member, such as a ``currency`` kind on a dimension, makes introspection
-raise ``ValueError`` naming the member, rather than leaving the format out. Reading the
-tags needs the same role to read them: on Databricks, access to the catalog's
-``information_schema``. If the warehouse refuses the tag lookup, introspection raises
-``SemolinaIntrospectionError`` saying so, rather than reporting the view as missing.
+raise ``ValueError`` naming the member, rather than leaving the format out. The role
+codegen connects as has to be allowed to read the tags: on Snowflake it calls
+``INFORMATION_SCHEMA.TAG_REFERENCES`` in the view's database, and on Databricks it reads
+the catalog's ``information_schema.column_tags``. If the warehouse refuses the tag lookup,
+introspection raises :py:exc:`~semolina.exceptions.SemolinaIntrospectionError` saying so,
+rather than reporting the view as missing.
+
+Semolina reads no ``S_LAYER_*`` tags on DuckDB, so a model generated from a DuckDB view
+never gets a ``label=`` or ``semantic_format=``. You can add them by hand.
 
 The metadata travels from the warehouse to your model. Change a description in the
 warehouse and regenerate, rather than editing the Python, since ``codegen --check``

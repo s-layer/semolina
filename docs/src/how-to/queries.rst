@@ -142,9 +142,10 @@ Group by a time grain
 ---------------------
 
 A date or timestamp dimension groups by its exact value. To roll it up to weeks, months or
-any coarser period, select ``.grain()`` of it instead. Its argument is ``"year"``,
-``"quarter"``, ``"month"``, ``"week"``, ``"day"``, ``"hour"``, ``"minute"`` or
-``"second"``:
+any coarser period, select :py:meth:`.grain() <semolina.fields.Dimension.grain>` of it
+instead. Its argument is ``"year"``, ``"quarter"``, ``"month"``, ``"week"``, ``"day"``,
+``"hour"``, ``"minute"`` or ``"second"``, and it returns a
+:py:class:`~semolina.fields.GrainedDimension` you select and order like any dimension:
 
 .. code-block:: python
 
@@ -211,7 +212,9 @@ any coarser period, select ``.grain()`` of it instead. Its argument is ``"year"`
          ORDER BY "ordered_at__week" ASC
 
       Grains on DuckDB need version 0.16.0 or later of the ``semantic_views`` extension,
-      which runs on DuckDB 2.0.
+      which runs on DuckDB 2.0. The ``semolina[duckdb]`` extra pins DuckDB 1.5.6, which
+      installs an older ``semantic_views``, so a grain query doesn't run on that pin.
+      ``to_sql("duckdb")`` still renders it.
 
 The result column is the field's name, two underscores and the grain, so this query's rows
 have the keys ``revenue`` and ``ordered_at__week``. The backends disagree on what a period

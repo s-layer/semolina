@@ -70,9 +70,9 @@ Options
    the committed file to check.
 
 ``--check``
-   Compare a committed model's annotations against the warehouse instead of
-   generating one. Reads the file ``--output`` names. Writes a per-field report to
-   stderr and nothing to stdout. See :ref:`howto-codegen-check`.
+   Compare a committed model's annotations, roles, columns and metadata arguments
+   against the warehouse instead of generating one. Reads the file ``--output`` names.
+   Writes a per-field report to stderr and nothing to stdout. See :ref:`howto-codegen-check`.
 
 ``--model`` *PATH*
    Older spelling of ``--output`` for ``--check``. Passing it without ``--check``,
@@ -91,7 +91,8 @@ Exit codes
      - Success
    * - 1
      - Unexpected error, including an unparseable committed file under ``--check``,
-       generated source that does not parse, or an installed ruff that fails on it
+       generated source that does not parse, an installed ruff that fails on it, or
+       ``S_LAYER_*`` tags that don't make a valid format for their member
    * - 2
      - Invalid option: an unrecognized or omitted ``--backend``, connection config
        that could not be assembled, a backend whose driver is not installed, a
@@ -108,9 +109,11 @@ Exit codes
      - Connection or authentication failure
        (:py:exc:`~semolina.exceptions.SemolinaConnectionError`)
    * - 5
-     - Annotation drift found by ``--check``
+     - Drift found by ``--check``: an annotation, role, column or metadata argument that
+       no longer matches the warehouse
    * - 6
-     - The warehouse was reached but could not describe a view
+     - The warehouse was reached but could not describe a view or refused the lookup of
+       its ``S_LAYER_*`` tags
        (:py:exc:`~semolina.exceptions.SemolinaIntrospectionError`, or a raw driver error
        from a custom engine), or ``--check`` fell back to warehouse metadata because the
        result-schema probe failed. A probe that ran but answered for only some fields
