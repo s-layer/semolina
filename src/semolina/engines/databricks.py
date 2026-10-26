@@ -38,6 +38,42 @@ def _to_pascal_case(view_name: str) -> str:
     return class_name_for(view_name)
 
 
+def _column_tags(cursor: Any, payload: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """
+    Read the metric view's ``S_LAYER_KIND`` and ``S_LAYER_SPEC`` Unity Catalog column tags.
+
+    ``DESCRIBE TABLE EXTENDED`` does not report column tags; the catalog's
+    ``information_schema.column_tags`` does, with no delay after they are set. The view is
+    named by the catalog, schema and table ``DESCRIBE`` resolved it to, so the lookup reads
+    the same view whatever form of the name the caller gave. The label is not a tag here:
+    Databricks has a native ``display_name`` slot for it.
+
+    Args:
+        cursor: An open ADBC cursor on a Databricks connection.
+        payload: The parsed ``DESCRIBE TABLE EXTENDED ... AS JSON`` result.
+
+    Returns:
+        Column name to tag name to value. A column with no tags is absent.
+    """
+    from semolina.codegen.introspector import S_LAYER_KIND, S_LAYER_SPEC
+    from semolina.engines.sql import DatabricksDialect
+
+    dialect = DatabricksDialect()
+    literal = dialect.render_literal
+    catalog = dialect.quote_identifier(str(payload["catalog_name"]))
+
+    cursor.execute(
+        f"SELECT column_name, tag_name, tag_value FROM {catalog}.information_schema.column_tags"
+        f" WHERE schema_name = {literal(str(payload['schema_name']))}"
+        f" AND table_name = {literal(str(payload['table_name']))}"
+        f" AND tag_name IN ({literal(S_LAYER_KIND)}, {literal(S_LAYER_SPEC)})"
+    )
+    tags: dict[str, dict[str, str]] = {}
+    for column, tag_name, tag_value in cursor.fetchall():
+        tags.setdefault(str(column), {})[str(tag_name)] = str(tag_value)
+    return tags
+
+
 def _introspect_databricks(cursor: Any, view_name: str, *, described: str) -> IntrospectedView:
     """
     Describe a Databricks metric view over an open cursor.
@@ -61,6 +97,7 @@ def _introspect_databricks(cursor: Any, view_name: str, *, described: str) -> In
     import json
 
     from semolina.codegen.introspector import (
+        semantic_format_from_tags,
         with_python_field_names,
     )
     from semolina.codegen.type_map import databricks_type_to_python
@@ -70,6 +107,7 @@ def _introspect_databricks(cursor: Any, view_name: str, *, described: str) -> In
     row: Any = cursor.fetchone()
     payload: dict[str, Any] = json.loads(row[0])
 
+    tags = _column_tags(cursor, payload)
     fields: list[IntrospectedField] = []
     columns: list[str] = []
     for col in payload.get("columns", []):
@@ -108,6 +146,9 @@ def _introspect_databricks(cursor: Any, view_name: str, *, described: str) -> In
                 source_name=source_name,
                 label=str(label) if label else None,
                 synonyms=tuple(str(s) for s in synonyms) if isinstance(synonyms, list) else (),
+                semantic_format=semantic_format_from_tags(
+                    original_col_name, tags.get(original_col_name, {}), field_type
+                ),
             )
         )
 
@@ -190,7 +231,7 @@ class DatabricksEngine(Engine):
     """
 
     introspected_metadata: ClassVar[frozenset[str]] = frozenset(
-        {"description", "label", "synonyms"}
+        {"description", "label", "synonyms", "semantic_format"}
     )
 
     def introspect(self, view_name: str) -> IntrospectedView:

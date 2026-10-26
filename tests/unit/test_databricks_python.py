@@ -329,15 +329,28 @@ class TestQueryPath:
 
         describe = json.dumps(
             {
+                "catalog_name": "main",
+                "schema_name": "analytics",
+                "table_name": "sales_view",
                 "columns": [
                     {"name": "country", "type": {"name": "string"}},
                     {"name": "revenue", "type": {"name": "bigint"}, "is_measure": True},
-                ]
+                ],
+            }
+        )
+        no_tags = pa.table(
+            {
+                "column_name": pa.array([], pa.string()),
+                "tag_name": pa.array([], pa.string()),
+                "tag_value": pa.array([], pa.string()),
             }
         )
 
         def _connect(**_kwargs: Any) -> _FakeConnectorConnection:
-            conn = _FakeConnectorConnection(lambda _sql: pa.table({"json_metadata": [describe]}))
+            described = pa.table({"json_metadata": [describe]})
+            conn = _FakeConnectorConnection(
+                lambda sql: described if sql.startswith("DESCRIBE") else no_tags
+            )
             connector.append(conn)
             return conn
 
@@ -348,7 +361,15 @@ class TestQueryPath:
             finally:
                 engine.dispose()
 
-        assert _statements(connector) == [("DESCRIBE TABLE EXTENDED `sales_view` AS JSON", None)]
+        assert _statements(connector) == [
+            ("DESCRIBE TABLE EXTENDED `sales_view` AS JSON", None),
+            (
+                "SELECT column_name, tag_name, tag_value FROM `main`.information_schema.column_tags"
+                " WHERE schema_name = 'analytics' AND table_name = 'sales_view'"
+                " AND tag_name IN ('S_LAYER_KIND', 'S_LAYER_SPEC')",
+                None,
+            ),
+        ]
         assert {f.name: f.field_type for f in view.fields} == {
             "country": "dimension",
             "revenue": "metric",

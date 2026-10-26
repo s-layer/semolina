@@ -20,12 +20,16 @@ from typing import TYPE_CHECKING, cast
 from semolina.introspection import IntrospectedField, IntrospectedView
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
+    from typing import Literal
+
+    from s_layer_semantic_formats import SLayerBlock
 
 __all__ = [
     "PLACEHOLDER_FIELD_NAME",
     "class_name_for",
     "python_field_names",
+    "semantic_format_from_tags",
     "synonyms_from_json",
     "IntrospectedField",
     "IntrospectedView",
@@ -78,6 +82,56 @@ def synonyms_from_json(value: str | None) -> tuple[str, ...]:
         msg = f"SYNONYMS should be a JSON list of strings, got {value!r}"
         raise ValueError(msg)
     return tuple(cast("list[str]", parsed))
+
+
+S_LAYER_KIND = "S_LAYER_KIND"
+"""The tag holding a member's S-LAYER kind, on every backend that carries the tags."""
+
+S_LAYER_LABEL = "S_LAYER_LABEL"
+"""The tag holding a member's label, where the warehouse has no native slot for one."""
+
+S_LAYER_SPEC = "S_LAYER_SPEC"
+"""The tag holding the rest of a member's S-LAYER block, as compact JSON."""
+
+
+def semantic_format_from_tags(
+    member: str,
+    tags: Mapping[str, str],
+    member_type: Literal["metric", "dimension", "fact"],
+) -> SLayerBlock | None:
+    """
+    Rebuild a member's S-LAYER block from its ``S_LAYER_KIND`` and ``S_LAYER_SPEC`` tags.
+
+    The label and synonyms are not folded in: a field carries them as its own arguments,
+    so the block it is given holds only what the two tags hold.
+
+    Args:
+        member: The member's name, for the error message.
+        tags: Tag name to value for this member. Tags other than the two are ignored.
+        member_type: The member's kind, which the block's kind must apply to.
+
+    Returns:
+        The block, or None when the member has no ``S_LAYER_KIND`` tag.
+
+    Raises:
+        ValueError: If the member has an ``S_LAYER_SPEC`` but no kind, or the tags do not
+            make a valid block for this kind of member. The warehouse states what the
+            values mean, so a tag that cannot be read is an error rather than a gap.
+    """
+    from s_layer_semantic_formats import SLayerValidationError, from_compact_json
+
+    kind = tags.get(S_LAYER_KIND)
+    spec = tags.get(S_LAYER_SPEC)
+    if not kind:
+        if spec:
+            msg = f"{member!r} has an {S_LAYER_SPEC} tag but no {S_LAYER_KIND} tag"
+            raise ValueError(msg)
+        return None
+    try:
+        return from_compact_json(kind, spec, member_type=member_type)
+    except SLayerValidationError as e:
+        msg = f"The S_LAYER tags on {member!r} do not make a valid block: {e}"
+        raise ValueError(msg) from e
 
 
 def class_name_for(view_name: str, *, reserved: frozenset[str] | None = None) -> str:

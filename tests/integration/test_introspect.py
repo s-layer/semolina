@@ -150,3 +150,34 @@ def test_snowflake_introspect_reads_comments_and_synonyms(snowflake_engine: Any)
     assert by_name["revenue"].synonyms == ("sales",)
     assert by_name["region"].synonyms == ()
     assert {field.label for field in view.fields} == {None}
+
+
+def test_databricks_introspect_reads_s_layer_column_tags(databricks_engine: Any) -> None:
+    """``S_LAYER_KIND`` / ``S_LAYER_SPEC`` from ``information_schema.column_tags``."""
+    from _recording import TAGGED_REVENUE_SPEC
+    from s_layer_semantic_formats import from_compact_json
+
+    by_name = {f.name: f for f in databricks_engine.introspect("tagged_view").fields}
+
+    assert by_name["revenue"].semantic_format == from_compact_json("currency", TAGGED_REVENUE_SPEC)
+    assert by_name["revenue"].label == "Revenue"
+    assert by_name["country"].semantic_format == from_compact_json("category", None)
+    assert by_name["country"].label == "Country"
+    assert by_name["region"].semantic_format is None
+
+
+def test_snowflake_introspect_reads_s_layer_member_tags(snowflake_engine: Any) -> None:
+    """``S_LAYER_*`` from ``TAG_REFERENCES``, a derived metric included."""
+    from _recording import TAGGED_REVENUE_SPEC
+    from s_layer_semantic_formats import from_compact_json
+
+    by_name = {f.name: f for f in snowflake_engine.introspect("tagged_view").fields}
+
+    assert by_name["revenue"].semantic_format == from_compact_json("currency", TAGGED_REVENUE_SPEC)
+    assert by_name["revenue"].label == "Revenue"
+    assert by_name["country"].semantic_format == from_compact_json("category", None)
+    assert by_name["country"].label == "Country"
+    assert by_name["margin"].semantic_format == from_compact_json("number", None)
+    assert by_name["region"].semantic_format is None
+    assert by_name["region"].label is None
+    assert by_name["cost"].semantic_format is None

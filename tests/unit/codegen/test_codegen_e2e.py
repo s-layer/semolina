@@ -241,17 +241,21 @@ def test_codegen_databricks_field_types(snapshot: SnapshotAssertion) -> None:
 
     describe_json = json.dumps(
         {
+            "catalog_name": "main",
+            "schema_name": "analytics",
+            "table_name": "sales_view",
             "columns": [
                 {"name": "revenue", "type": {"name": "bigint"}, "is_measure": True},
                 {"name": "cost", "type": {"name": "bigint"}, "is_measure": True},
                 {"name": "country", "type": {"name": "string"}},
                 {"name": "region", "type": {"name": "string"}},
-            ]
+            ],
         }
     )
 
     mock_cursor = MagicMock()
     mock_cursor.fetchone.return_value = (describe_json,)
+    mock_cursor.fetchall.return_value = []  # no column tags
 
     @contextmanager
     def _connect() -> Generator[Any]:
@@ -376,8 +380,14 @@ def test_codegen_non_identifier_names_render_valid_python(backend: str) -> None:
             http_path="/sql/1.0/warehouses/abc",
             token=SecretStr("dapi-test-token"),
         )
-        payload = {"columns": [{"name": name, "type": {"name": "string"}} for name in columns]}
+        payload = {
+            "catalog_name": "main",
+            "schema_name": "analytics",
+            "table_name": "odd_view",
+            "columns": [{"name": name, "type": {"name": "string"}} for name in columns],
+        }
         mock_cursor.fetchone.return_value = (json.dumps(payload),)
+        mock_cursor.fetchall.return_value = []  # no column tags
     mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
     mock_cursor.__exit__ = MagicMock(return_value=False)
 

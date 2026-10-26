@@ -176,7 +176,7 @@ def snowflake_engine(
 
     if _is_recording(request):
         import snowflake.connector
-        from _recording import snowflake_query_config
+        from _recording import TAGGED_REVENUE_SPEC, snowflake_query_config
         from orders import orders_values_sql
 
         from semolina.config import warehouse_config
@@ -254,6 +254,29 @@ def snowflake_engine(
                     " (sales_data.revenue AS SUM(revenue)"
                     " WITH SYNONYMS = ('sales') COMMENT = 'Gross revenue')"
                     " COMMENT = 'Sales by country'"
+                )
+                # S-LAYER tags on members, as dbt-s-layer writes them: fully qualified tag
+                # names, member clause order AS / SYNONYMS / TAG / COMMENT, and one derived
+                # metric, which TAG_REFERENCES names on the view rather than on a table.
+                tag = f"{session_database}.{schema_name}"
+                for name in ("S_LAYER_KIND", "S_LAYER_LABEL", "S_LAYER_SPEC"):
+                    cur.execute(f"CREATE TAG {tag}.{name}")
+                cur.execute(
+                    "CREATE SEMANTIC VIEW tagged_view"
+                    " TABLES (sales_data)"
+                    " DIMENSIONS"
+                    " (sales_data.country AS country"
+                    f" WITH TAG ({tag}.S_LAYER_KIND = 'category',"
+                    f" {tag}.S_LAYER_LABEL = 'Country'),"
+                    " sales_data.region AS region)"
+                    " METRICS"
+                    " (sales_data.revenue AS SUM(revenue)"
+                    f" WITH TAG ({tag}.S_LAYER_KIND = 'currency',"
+                    f" {tag}.S_LAYER_LABEL = 'Revenue',"
+                    f""" {tag}.S_LAYER_SPEC = '{TAGGED_REVENUE_SPEC}'),"""
+                    " sales_data.cost AS SUM(cost),"
+                    " margin AS sales_data.revenue - sales_data.cost"
+                    f" WITH TAG ({tag}.S_LAYER_KIND = 'number'))"
                 )
                 cur.execute(
                     "CREATE TABLE orders_data"
@@ -340,6 +363,7 @@ def databricks_engine(
 
     if _is_recording(request):
         import databricks.sql
+        from _recording import TAGGED_REVENUE_SPEC
         from orders import orders_values_sql
 
         from semolina.config import warehouse_config
@@ -453,6 +477,34 @@ def databricks_engine(
                     "    display_name: Revenue\n"
                     "    synonyms: [sales]\n"
                     "$$"
+                )
+                # S-LAYER kind and spec as Unity Catalog column tags, as dbt-s-layer sets
+                # them after each build; the label stays in the native display_name.
+                cur.execute(
+                    f"CREATE OR REPLACE VIEW {catalog}.{schema_name}.tagged_view"
+                    " WITH METRICS LANGUAGE YAML AS $$\n"
+                    "version: 1.1\n"
+                    f"source: {catalog}.{schema_name}.sales_data\n"
+                    "dimensions:\n"
+                    "  - name: country\n"
+                    "    expr: country\n"
+                    "    display_name: Country\n"
+                    "  - name: region\n"
+                    "    expr: region\n"
+                    "measures:\n"
+                    "  - name: revenue\n"
+                    "    expr: SUM(revenue)\n"
+                    "    display_name: Revenue\n"
+                    "$$"
+                )
+                cur.execute(
+                    f"ALTER TABLE {catalog}.{schema_name}.tagged_view ALTER COLUMN revenue"
+                    " SET TAGS ('S_LAYER_KIND' = 'currency',"
+                    f" 'S_LAYER_SPEC' = '{TAGGED_REVENUE_SPEC}')"
+                )
+                cur.execute(
+                    f"ALTER TABLE {catalog}.{schema_name}.tagged_view ALTER COLUMN country"
+                    " SET TAGS ('S_LAYER_KIND' = 'category')"
                 )
                 cur.execute(
                     f"CREATE TABLE {catalog}.{schema_name}.orders_data"

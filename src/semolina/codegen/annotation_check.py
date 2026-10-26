@@ -22,9 +22,10 @@ assurance (threat T-48-24). Every row carries ``execute-schema``, ``zero-row`` o
 and a status — nothing else. The probe fetches no rows by construction, so no value is even
 in scope (threat T-48-22).
 
-**Metadata drifts too.** A field's ``description=``, ``label=`` and ``synonyms=`` are
-compared against what the engine introspects (``Engine.introspected_metadata``), as is the
-class's ``description=`` against the view's comment. A mismatch is drift, not a merge: the
+**Metadata drifts too.** A field's ``description=``, ``label=``, ``synonyms=`` and
+``semantic_format=`` are compared against what the engine introspects
+(``Engine.introspected_metadata``), as is the class's ``description=`` against the view's
+comment. A mismatch is drift, not a merge: the
 warehouse is what the model was generated from, so the committed copy is the stale one.
 
 The generation path is deliberately untouched by all of this: ``semolina codegen`` still
@@ -38,6 +39,7 @@ two routes still disagree — Phase 47's central finding, surfaced rather than s
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -47,7 +49,10 @@ from semolina.codegen.python_renderer import metric_annotation
 from semolina.codegen.type_compare import compared_annotation, generated_annotation
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     import pyarrow
+    from s_layer_semantic_formats import SLayerBlock
 
     from semolina.codegen.model_reader import CommittedField, CommittedModel
     from semolina.engines.base import Engine
@@ -400,7 +405,52 @@ def _metadata_drift(
             reasons.append(
                 f"synonyms: committed {committed_synonyms!r}, warehouse {field.synonyms!r}"
             )
+    if "semantic_format" in compared:
+        format_drift = _format_drift(metadata.get("semantic_format"), field.semantic_format)
+        if format_drift:
+            reasons.append(format_drift)
     return "; ".join(reasons)
+
+
+def _format_text(block: SLayerBlock | None) -> str:
+    """Write a block's normal form as compact JSON for a ``Detail`` line, or ``None``."""
+    if block is None:
+        return "None"
+    return json.dumps(block.normal_form(), sort_keys=True, separators=(",", ":"))
+
+
+def _format_drift(committed: object, warehouse: SLayerBlock | None) -> str:
+    """
+    Describe how a committed ``semantic_format=`` differs from the warehouse's block.
+
+    The two compare by normal form, so a committed format spelled with defaults left out,
+    or keys in another order, matches the block codegen would write.
+
+    Args:
+        committed: The committed argument as the reader evaluated it, or None for none.
+        warehouse: The block the warehouse's tags make, or None for none.
+
+    Returns:
+        A human-readable description, or the empty string when they match.
+    """
+    from s_layer_semantic_formats import SLayerValidationError, parse_block
+
+    if committed is None:
+        committed_block = None
+    else:
+        try:
+            committed_block = parse_block(cast("Mapping[str, Any]", committed))
+        except (SLayerValidationError, TypeError):
+            return (
+                "semantic_format: committed is not a valid block, "
+                f"warehouse {_format_text(warehouse)}"
+            )
+    if committed_block == warehouse:
+        return ""
+    return (
+        f"semantic_format: committed {_format_text(committed_block)}, "
+        f"warehouse {_format_text(warehouse)}"
+    )
 
 
 def _view_metadata_drift(

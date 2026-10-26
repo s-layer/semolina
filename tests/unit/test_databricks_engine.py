@@ -70,6 +70,15 @@ def _patch_connect(engine: Any, cursor: Any) -> Any:
     return patch.object(engine, "connect", return_value=conn)
 
 
+def _located(payload: str) -> str:
+    """Add the catalog, schema and table a real ``DESCRIBE ... AS JSON`` always reports."""
+    data = json.loads(payload)
+    data.setdefault("catalog_name", "main")
+    data.setdefault("schema_name", "analytics")
+    data.setdefault("table_name", "sales_view")
+    return json.dumps(data)
+
+
 class TestDatabricksEngineConstruction:
     """
     DatabricksEngine is built via create_engine and owns pool + dialect.
@@ -207,10 +216,22 @@ class TestDatabricksEngineIntrospect:
         }
     )
 
-    def _introspect(self, engine: Any, payload: str, view: str = "sales_view") -> Any:
-        """Run introspect() with a cursor whose fetchone() returns ``payload``."""
+    def _introspect(
+        self,
+        engine: Any,
+        payload: str,
+        view: str = "sales_view",
+        tag_rows: list[tuple[str, str, str]] | None = None,
+    ) -> Any:
+        """
+        Run introspect() with a cursor whose fetchone() returns ``payload``.
+
+        The payload gains the catalog, schema and table every real ``DESCRIBE`` reports,
+        where it leaves them out, and the column-tags query returns ``tag_rows``.
+        """
         cursor = MagicMock(name="cursor")
-        cursor.fetchone.return_value = (payload,)
+        cursor.fetchone.return_value = (_located(payload),)
+        cursor.fetchall.return_value = tag_rows or []
         with _patch_introspect_cursor(engine, cursor):
             return engine.introspect(view)
 
@@ -244,6 +265,60 @@ class TestDatabricksEngineIntrospect:
         view = self._introspect(engine, payload)
 
         assert view.fields[0].data_type == "TODO: geography"
+
+    def test_reads_s_layer_column_tags_into_semantic_format(self) -> None:
+        """``S_LAYER_KIND`` and ``S_LAYER_SPEC`` column tags make the block."""
+        from s_layer_semantic_formats import from_compact_json
+
+        spec = '{"value":{"currency":"USD"}}'
+        view = self._introspect(
+            _make_databricks_engine(),
+            self._DESCRIBE_JSON,
+            tag_rows=[
+                ("revenue", "S_LAYER_KIND", "currency"),
+                ("revenue", "S_LAYER_SPEC", spec),
+                ("country", "S_LAYER_KIND", "category"),
+            ],
+        )
+
+        fields = {f.name: f for f in view.fields}
+        assert fields["revenue"].semantic_format == from_compact_json("currency", spec)
+        assert fields["country"].semantic_format == from_compact_json("category", None)
+        assert fields["region"].semantic_format is None
+
+    def test_reads_tags_for_the_view_describe_resolved(self) -> None:
+        """The catalog, schema and table come from ``DESCRIBE``, whatever the name spelling."""
+        engine = _make_databricks_engine()
+        cursor = MagicMock(name="cursor")
+        cursor.fetchone.return_value = (
+            _located(
+                json.dumps(
+                    {
+                        "catalog_name": "main",
+                        "schema_name": "it's",
+                        "table_name": "sales_view",
+                        "columns": [],
+                    }
+                )
+            ),
+        )
+        cursor.fetchall.return_value = []
+        with _patch_introspect_cursor(engine, cursor):
+            engine.introspect("`it's`.sales_view")
+
+        assert cursor.execute.call_args_list[1][0][0] == (
+            "SELECT column_name, tag_name, tag_value FROM `main`.information_schema.column_tags"
+            " WHERE schema_name = 'it\\'s' AND table_name = 'sales_view'"
+            " AND tag_name IN ('S_LAYER_KIND', 'S_LAYER_SPEC')"
+        )
+
+    def test_refuses_tags_that_make_no_valid_block(self) -> None:
+        with pytest.raises(ValueError, match="'country'"):
+            self._introspect(
+                _make_databricks_engine(),
+                self._DESCRIBE_JSON,
+                tag_rows=[("country", "S_LAYER_KIND", "currency")],
+            )
 
     def test_reads_comment_display_name_and_synonyms(self) -> None:
         """
@@ -335,11 +410,14 @@ class TestDatabricksEngineIntrospect:
         """
         engine = _make_databricks_engine()
         cursor = MagicMock(name="cursor")
-        cursor.fetchone.return_value = (self._DESCRIBE_JSON,)
+        cursor.fetchone.return_value = (_located(self._DESCRIBE_JSON),)
+        cursor.fetchall.return_value = []
         with _patch_introspect_cursor(engine, cursor):
             result = engine.introspect(view)
 
-        assert cursor.execute.call_args[0][0] == f"DESCRIBE TABLE EXTENDED {described} AS JSON"
+        assert cursor.execute.call_args_list[0][0][0] == (
+            f"DESCRIBE TABLE EXTENDED {described} AS JSON"
+        )
         assert result.view_name == view
 
     def test_dotted_quoted_view_name_raises(self) -> None:

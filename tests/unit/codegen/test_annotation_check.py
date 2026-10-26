@@ -42,10 +42,11 @@ from semolina.engines.base import Engine
 from semolina.engines.sql import DatabricksDialect, DuckDBDialect, SnowflakeDialect, SQLDialect
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Mapping
     from pathlib import Path
 
     import pyarrow
+    from s_layer_semantic_formats import SLayerBlock
 
 pytest.importorskip("adbc_driver_duckdb")
 
@@ -1384,3 +1385,58 @@ class TestMetadataIsComparedToo:
 
         assert len(read.warnings) == 3, read.warnings
         assert report.has_drift is False, report
+
+
+class TestSemanticFormatIsComparedByNormalForm:
+    """``semantic_format=`` against the block the warehouse's tags make."""
+
+    WAREHOUSE_SPEC = '{"value":{"currency":"USD"}}'
+
+    @staticmethod
+    def drift(committed: Mapping[str, object], warehouse: SLayerBlock | None) -> str:
+        from semolina.codegen.annotation_check import _metadata_drift
+
+        field = IntrospectedField("revenue", "metric", "int", semantic_format=warehouse)
+        committed_field = CommittedField(
+            name="revenue",
+            field_class="Metric",
+            annotation="int | None",
+            source_name=None,
+            metadata=committed,
+        )
+        return _metadata_drift(frozenset({"semantic_format"}), field, committed_field)
+
+    def warehouse(self) -> SLayerBlock:
+        from s_layer_semantic_formats import from_compact_json
+
+        return from_compact_json("currency", self.WAREHOUSE_SPEC)
+
+    def test_the_same_block_spelled_without_defaults_matches(self) -> None:
+        committed = {"semantic_format": {"value": {"kind": "currency", "currency": "USD"}}}
+        assert self.drift(committed, self.warehouse()) == ""
+
+    def test_the_normal_form_codegen_writes_matches(self) -> None:
+        from s_layer_semantic_formats import from_compact_json
+
+        normal = from_compact_json("currency", self.WAREHOUSE_SPEC).normal_form()
+        assert self.drift({"semantic_format": normal}, self.warehouse()) == ""
+
+    def test_a_different_block_is_drift(self) -> None:
+        committed = {"semantic_format": {"value": {"kind": "currency", "currency": "EUR"}}}
+        detail = self.drift(committed, self.warehouse())
+        assert detail.startswith("semantic_format: committed ")
+        assert "EUR" in detail and "USD" in detail
+
+    def test_a_missing_format_against_a_tagged_member_is_drift(self) -> None:
+        assert "committed None" in self.drift({}, self.warehouse())
+
+    def test_a_format_on_an_untagged_member_is_drift(self) -> None:
+        committed = {"semantic_format": {"value": {"kind": "count"}}}
+        assert "warehouse None" in self.drift(committed, None)
+
+    def test_neither_side_is_not_drift(self) -> None:
+        assert self.drift({}, None) == ""
+
+    def test_an_invalid_committed_block_is_drift_not_a_crash(self) -> None:
+        committed = {"semantic_format": {"value": {"kind": "bogus"}}}
+        assert "committed is not a valid block" in self.drift(committed, self.warehouse())
