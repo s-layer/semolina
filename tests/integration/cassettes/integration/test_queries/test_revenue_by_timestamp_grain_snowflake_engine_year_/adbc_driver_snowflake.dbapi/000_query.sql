@@ -1,0 +1,7 @@
+SELECT
+  AGG("REVENUE") AS "revenue",
+  CAST(TIMESTAMP_TRUNC("ORDERED_AT", YEAR) AS DATE) AS "ordered_at__year"
+FROM "ORDERS_VIEW"
+GROUP BY ALL
+ORDER BY
+  "ordered_at__year" ASC NULLS LAST

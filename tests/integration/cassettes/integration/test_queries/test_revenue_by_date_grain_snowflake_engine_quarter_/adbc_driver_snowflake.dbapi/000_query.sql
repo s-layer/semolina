@@ -1,0 +1,7 @@
+SELECT
+  AGG("REVENUE") AS "revenue",
+  CAST(TIMESTAMP_TRUNC("ORDERED_ON", QUARTER) AS DATE) AS "ordered_on__quarter"
+FROM "ORDERS_VIEW"
+GROUP BY ALL
+ORDER BY
+  "ordered_on__quarter" DESC NULLS FIRST
