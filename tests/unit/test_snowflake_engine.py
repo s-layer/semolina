@@ -295,12 +295,12 @@ class TestSnowflakeEngineIntrospect:
         ("TABLE", "SALES_DATA", None, "BASE_TABLE_NAME", "SALES_DATA"),
         ("METRIC", "REVENUE", "SALES_DATA", "DATA_TYPE", "NUMBER(38,0)"),
         ("DIMENSION", "COUNTRY", "SALES_DATA", "DATA_TYPE", "VARCHAR"),
-        ("METRIC", "MARGIN", None, "DATA_TYPE", "NUMBER(38,0)"),
+        ("DERIVED_METRIC", "MARGIN", None, "DATA_TYPE", "NUMBER(38,0)"),
     ]
     _TAGGED_SHOW: ClassVar[list[tuple[Any, ...]]] = [
         ("REVENUE", "METRIC", json.dumps({"type": "FIXED", "scale": 0}), ""),
         ("COUNTRY", "DIMENSION", json.dumps({"type": "TEXT"}), ""),
-        ("MARGIN", "METRIC", json.dumps({"type": "FIXED", "scale": 0}), ""),
+        ("MARGIN", "DERIVED_METRIC", json.dumps({"type": "FIXED", "scale": 0}), ""),
     ]
 
     def test_introspect_reads_member_tags_into_label_and_semantic_format(self) -> None:
@@ -328,6 +328,34 @@ class TestSnowflakeEngineIntrospect:
         assert fields["country"].label == "Country"
         assert fields["country"].semantic_format is None
         assert fields["margin"].label is None
+
+    def test_introspect_reads_a_derived_metric_as_a_metric(self) -> None:
+        """
+        ``SHOW COLUMNS`` reports a view-level derived metric's kind as ``DERIVED_METRIC``.
+
+        It is queried like any metric, so it is one; a ``derived_metric`` role matches no
+        field class.
+        """
+        cursor = _show_columns_cursor(self._TAGGED_SHOW, describe_rows=self._TAGGED_DESCRIBE)
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor):
+            view = engine.introspect("sales_view")
+
+        assert {f.name: f.field_type for f in view.fields}["margin"] == "metric"
+
+    def test_introspect_reads_a_derived_metrics_tags(self) -> None:
+        cursor = _show_columns_cursor(
+            self._TAGGED_SHOW,
+            describe_rows=self._TAGGED_DESCRIBE,
+            tag_rows=[("MARGIN", "S_LAYER_KIND", "number")],
+        )
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor):
+            view = engine.introspect("sales_view")
+
+        margin = {f.name: f for f in view.fields}["margin"]
+        assert margin.semantic_format is not None
+        assert margin.semantic_format.normal_form()["value"]["kind"] == "number"
 
     def test_introspect_reads_tags_one_member_at_a_time(self) -> None:
         """
