@@ -54,6 +54,12 @@ for the types ``sales_data`` lacks:
 as dimensions and the measures ``total_price`` (SUM(price)), ``avg_price`` (AVG(price))
 and ``total_qty`` (SUM(qty)).
 
+Both fixtures also create ``orders_data`` and its view ``orders_view``, for the time grain
+tests. ``ordered_at`` is a timestamp without time zone and ``ordered_on`` its date; the
+view has both as dimensions and the measure ``revenue`` (SUM(amount)). The rows are
+:data:`orders.ORDERS_ROWS`, chosen to straddle a second, minute, hour, day, ISO week
+(Sunday to Monday), month, quarter and year boundary.
+
 ``is_online`` was added after the first cassettes were recorded. Adding a column changes
 no other query's SQL or rows, so those cassettes still hold; the boolean and NULL tests
 that use it were recorded against this table.
@@ -171,6 +177,7 @@ def snowflake_engine(
     if _is_recording(request):
         import snowflake.connector
         from _recording import snowflake_query_config
+        from orders import orders_values_sql
 
         from semolina.config import warehouse_config
 
@@ -233,6 +240,19 @@ def snowflake_engine(
                     " TABLES (sales_data)"
                     " DIMENSIONS (sales_data.country AS country)"
                     ' METRICS (sales_data."gross" AS SUM(revenue))'
+                )
+                cur.execute(
+                    "CREATE TABLE orders_data"
+                    " (ordered_at TIMESTAMP_NTZ, ordered_on DATE, amount NUMBER)"
+                )
+                cur.execute(f"INSERT INTO orders_data VALUES {orders_values_sql()}")
+                cur.execute(
+                    "CREATE SEMANTIC VIEW orders_view"
+                    " TABLES (orders_data)"
+                    " DIMENSIONS"
+                    " (orders_data.ordered_at AS ordered_at,"
+                    " orders_data.ordered_on AS ordered_on)"
+                    " METRICS (orders_data.revenue AS SUM(amount))"
                 )
         except Exception as e:
             pytest.fail(f"Failed to create Snowflake integration test schema/objects: {e}")
@@ -306,6 +326,7 @@ def databricks_engine(
 
     if _is_recording(request):
         import databricks.sql
+        from orders import orders_values_sql
 
         from semolina.config import warehouse_config
 
@@ -392,6 +413,28 @@ def databricks_engine(
                     "    expr: AVG(price)\n"
                     "  - name: total_qty\n"
                     "    expr: SUM(qty)\n"
+                    "$$"
+                )
+                cur.execute(
+                    f"CREATE TABLE {catalog}.{schema_name}.orders_data"
+                    " (ordered_at TIMESTAMP_NTZ, ordered_on DATE, amount BIGINT)"
+                )
+                cur.execute(
+                    f"INSERT INTO {catalog}.{schema_name}.orders_data VALUES {orders_values_sql()}"
+                )
+                cur.execute(
+                    f"CREATE OR REPLACE VIEW {catalog}.{schema_name}.orders_view"
+                    " WITH METRICS LANGUAGE YAML AS $$\n"
+                    "version: 1.1\n"
+                    f"source: {catalog}.{schema_name}.orders_data\n"
+                    "dimensions:\n"
+                    "  - name: ordered_at\n"
+                    "    expr: ordered_at\n"
+                    "  - name: ordered_on\n"
+                    "    expr: ordered_on\n"
+                    "measures:\n"
+                    "  - name: revenue\n"
+                    "    expr: SUM(amount)\n"
                     "$$"
                 )
         except Exception as e:

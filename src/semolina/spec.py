@@ -39,7 +39,16 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypeAlias, TypedDict, get_args
 
 from .exceptions import SemolinaSpecError
-from .fields import Dimension, Fact, Field, Metric, NullsOrdering, OrderTerm
+from .fields import (
+    GRAINS,
+    Dimension,
+    Fact,
+    Field,
+    GrainedDimension,
+    Metric,
+    NullsOrdering,
+    OrderTerm,
+)
 from .filters import (
     IsNull,
     Not,
@@ -238,12 +247,67 @@ def field_by_name(model: type[SemanticView], name: str, *, path: str = "") -> Fi
     found = fields.get(name)
     if found is not None:
         return found
+    grained = _grained_by_name(fields, name, path)
+    if grained is not None:
+        return grained
     close = difflib.get_close_matches(name, list(fields), n=3)
     hint = f" Did you mean {_quoted_list(close)}?" if close else ""
     raise SemolinaSpecError(
         f"{model.__name__} has no field {name!r}.{hint} Its fields are {_quoted_list(fields)}.",
         path,
     )
+
+
+def _grained_by_name(
+    fields: Mapping[str, Field[Any]], name: str, path: str
+) -> GrainedDimension | None:
+    """
+    Resolve ``<dimension>__<grain>`` to that dimension truncated to that grain.
+
+    Args:
+        fields: The model's fields.
+        name: The name asked for.
+        path: Where it sits, for the error message.
+
+    Returns:
+        The truncated dimension, or ``None`` when ``name`` does not have that shape.
+
+    Raises:
+        SemolinaSpecError: If the dimension exists but cannot take that grain (a date
+            asked for its hours, say).
+    """
+    base_name, _, unit = name.rpartition("__")
+    base = fields.get(base_name)
+    if not isinstance(base, Dimension) or unit not in GRAINS:
+        return None
+    try:
+        return base.grain(unit)
+    except (TypeError, ValueError) as error:
+        raise SemolinaSpecError(str(error), path) from None
+
+
+def _grain_names(fields: Mapping[str, Field[Any]]) -> list[str]:
+    """
+    List the ``<dimension>__<grain>`` names a model's declared date and timestamp fields take.
+
+    A dimension declared without a type is left out, since it may not be a date at all.
+
+    Args:
+        fields: The model's fields.
+
+    Returns:
+        The names, a dimension's grains together, coarsest first.
+    """
+    names: list[str] = []
+    for name, field in fields.items():
+        if not isinstance(field, Dimension):
+            continue
+        declared = _field_value_type(field)
+        if declared is datetime.datetime:
+            names.extend(f"{name}__{unit}" for unit in GRAINS)
+        elif declared is datetime.date:
+            names.extend(f"{name}__{unit}" for unit in GRAINS[: GRAINS.index("day") + 1])
+    return names
 
 
 def _model_fields(model: type[SemanticView]) -> Mapping[str, Field[Any]]:
@@ -540,6 +604,12 @@ def _leaf(model: type[SemanticView], spec: Mapping[str, Any], path: str) -> Pred
         if key not in spec:
             raise SemolinaSpecError(f"a filter needs {key!r}", path)
     field = field_by_name(model, spec["field"], path=f"{path}.field")
+    if isinstance(field, GrainedDimension):
+        raise SemolinaSpecError(
+            f"{field.name!r} cannot be filtered. Filter {field.base.name!r} instead, which "
+            f"narrows the rows before they are grouped by {field.unit}.",
+            f"{path}.field",
+        )
     op = spec["op"]
     if op not in _OPS:
         close = difflib.get_close_matches(str(op), _OPS, n=1)
@@ -794,15 +864,23 @@ def query_spec_schema(model: type[SemanticView]) -> dict[str, Any]:
     """
     fields = _model_fields(model)
     metric_names = [n for n, f in fields.items() if isinstance(f, Metric)]
-    dimension_names = [n for n, f in fields.items() if isinstance(f, Dimension | Fact)]
+    grain_names = _grain_names(fields)
+    dimension_names = [
+        *(n for n, f in fields.items() if isinstance(f, Dimension | Fact)),
+        *grain_names,
+    ]
     all_names = list(fields)
+    sortable_names = [*all_names, *grain_names]
 
     properties: dict[str, Any] = {}
     if metric_names:
         properties["metrics"] = _name_list_schema(metric_names, "Metrics to aggregate.")
     if dimension_names:
         properties["dimensions"] = _name_list_schema(
-            dimension_names, "Dimensions and facts to group by."
+            dimension_names,
+            "Dimensions and facts to group by. '<date field>__<grain>' groups a date or "
+            "timestamp by year, quarter, month, week (from Monday), day, hour, minute or "
+            "second.",
         )
     if all_names:
         properties["where"] = {
@@ -821,7 +899,7 @@ def query_spec_schema(model: type[SemanticView]) -> dict[str, Any]:
             "type": ["array", "null"],
             "items": {
                 "anyOf": [
-                    {"enum": [*all_names, *(f"-{n}" for n in all_names)]},
+                    {"enum": [*sortable_names, *(f"-{n}" for n in sortable_names)]},
                     {"$ref": "#/$defs/order"},
                 ]
             },
@@ -863,7 +941,7 @@ def query_spec_schema(model: type[SemanticView]) -> dict[str, Any]:
         defs["order"] = {
             "type": "object",
             "properties": {
-                "field": field_enum,
+                "field": {"enum": sortable_names},
                 "direction": {"enum": ["asc", "desc"]},
                 "nulls": {"enum": ["first", "last"]},
             },

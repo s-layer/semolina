@@ -61,6 +61,10 @@ __all__ = [
 ]
 
 
+_DATE_GRAINS = frozenset({"year", "quarter", "month", "week", "day"})
+"""The grains whose truncation :meth:`SQLDialect.truncate_to_grain` casts to ``DATE``."""
+
+
 def sql_str_literal(value: str) -> str:
     """
     Render a value as a single-quoted SQL string literal, escaping quotes.
@@ -496,6 +500,29 @@ class SQLDialect(ABC):
         """
         pass
 
+    def truncate_to_grain(self, column: str, unit: str) -> str:
+        """
+        Return the expression that truncates a date or timestamp column to a time grain.
+
+        The result is the start of the period. A grain of a day or coarser is cast to
+        ``DATE``, so the column has one type on every backend: Snowflake returns a ``DATE``
+        for a ``DATE`` input while Databricks and DuckDB return a ``TIMESTAMP``. Finer grains
+        stay timestamps. ``DATE_TRUNC('week', ...)`` starts weeks on Monday on Databricks
+        and DuckDB; Snowflake overrides this method because its week depends on a session
+        parameter.
+
+        Args:
+            column: The quoted column (or other SQL expression) to truncate.
+            unit: One of :data:`semolina.fields.GRAINS`.
+
+        Returns:
+            A SQL expression.
+        """
+        truncated = f"DATE_TRUNC('{unit}', {column})"
+        if unit in _DATE_GRAINS:
+            return f"CAST({truncated} AS DATE)"
+        return truncated
+
     @abstractmethod
     def normalize_identifier(self, name: str) -> str:
         """
@@ -689,6 +716,27 @@ class SnowflakeDialect(SQLDialect):
                 'revenue' -> 'AGG("revenue")'
         """
         return f"AGG({self.quote_identifier(field_name)})"
+
+    def truncate_to_grain(self, column: str, unit: str) -> str:
+        """
+        Truncate to a grain, with weeks that start on Monday whatever ``WEEK_START`` says.
+
+        Snowflake's ``DATE_TRUNC('week', ...)`` starts the week on the day the
+        ``WEEK_START`` session parameter names, so it would differ between accounts and
+        from the other backends. ``DAYOFWEEKISO`` ignores the parameter (Monday is 1), so
+        stepping back to the Monday gives the ISO week start everywhere. Other grains use
+        :meth:`SQLDialect.truncate_to_grain`.
+
+        Args:
+            column: The quoted column to truncate.
+            unit: One of :data:`semolina.fields.GRAINS`.
+
+        Returns:
+            A SQL expression.
+        """
+        if unit == "week":
+            return f"DATEADD('day', 1 - DAYOFWEEKISO({column}), CAST({column} AS DATE))"
+        return super().truncate_to_grain(column, unit)
 
     def normalize_identifier(self, name: str) -> str:
         """
@@ -1059,6 +1107,26 @@ class SQLBuilder:
         if field.source is not None:
             return field.source
         return self.dialect.normalize_identifier(field.name)
+
+    def _dimension_expression(self, field: Any) -> str:
+        """
+        Return the SQL a selected dimension or fact is computed by.
+
+        The quoted column, or for a :class:`~semolina.fields.GrainedDimension` its base
+        column truncated by :meth:`SQLDialect.truncate_to_grain`.
+
+        Args:
+            field: A selected dimension or fact.
+
+        Returns:
+            A SQL expression.
+        """
+        from semolina.fields import GrainedDimension
+
+        if isinstance(field, GrainedDimension):
+            column = self.dialect.quote_identifier(self._resolve_col_name(field.base))
+            return self.dialect.truncate_to_grain(column, field.unit)
+        return self.dialect.quote_identifier(self._resolve_col_name(field))
 
     def _identifier_key(self, quoted: str) -> str:
         """
@@ -1494,11 +1562,9 @@ class SQLBuilder:
             wrapped = self.dialect.wrap_metric(col_name)
             select_items.append(f"{wrapped} AS {self._field_alias(metric)}")
 
-        # Add dimensions and facts (quoted identifiers)
+        # Add dimensions and facts (quoted identifiers), a truncated dimension as its expression
         for dim in query.selected_dimensions:
-            col_name = self._resolve_col_name(dim)
-            quoted = self.dialect.quote_identifier(col_name)
-            select_items.append(f"{quoted} AS {self._field_alias(dim)}")
+            select_items.append(f"{self._dimension_expression(dim)} AS {self._field_alias(dim)}")
 
         return "SELECT " + ", ".join(select_items)
 
@@ -1611,7 +1677,7 @@ class SQLBuilder:
         Returns:
             ORDER BY clause (e.g., 'ORDER BY "revenue" DESC NULLS FIRST')
         """
-        from semolina.fields import Metric, OrderTerm
+        from semolina.fields import GrainedDimension, Metric, OrderTerm
 
         # By name: Field.__eq__ builds a filter, so `field in query.selected_metrics` is always
         # true.
@@ -1619,6 +1685,9 @@ class SQLBuilder:
         aliases = self._select_aliases(query)
 
         def _quote_field(field: Any) -> str:
+            if isinstance(field, GrainedDimension):
+                # Selected (unselected dimensions are refused first), so its alias names it.
+                return self._field_alias(field)
             col_name = self._resolve_col_name(field)
             if not isinstance(field, Metric):
                 return self._order_by_column(field, col_name, aliases)
@@ -1889,7 +1958,7 @@ class DuckDBSQLBuilder(SQLBuilder):
                 a dimension and a metric under ``OR`` or ``NOT``, or if ``order_by()`` names
                 a dimension or fact the query does not select.
         """
-        from semolina.fields import Fact
+        from semolina.fields import Fact, GrainedDimension
 
         self._refuse_unselected_order_dimensions(query)
         model = self._query_model(query)
@@ -1902,6 +1971,13 @@ class DuckDBSQLBuilder(SQLBuilder):
         dim_names: list[str] = []
         fact_names: list[str] = []
         for field in query.selected_dimensions:
+            if isinstance(field, GrainedDimension):
+                # An expression item (duckdb-semantic-views >= 0.16.0), named by its alias
+                # so the outer SELECT and ORDER BY see it as a plain column.
+                column = self.dialect.quote_identifier(self._resolve_col_name(field.base))
+                truncated = self.dialect.truncate_to_grain(column, field.unit)
+                dim_names.append(f"{truncated} AS {self._field_alias(field)}")
+                continue
             col_name = self._resolve_col_name(field)
             if isinstance(field, Fact):
                 fact_names.append(col_name)
@@ -1979,6 +2055,25 @@ class DuckDBSQLBuilder(SQLBuilder):
             parts.append(self._build_limit_clause(query))
 
         return "\n".join(parts), all_params
+
+    def _dimension_expression(self, field: Any) -> str:
+        """
+        Name a selected dimension in the outer ``SELECT`` by the column the call returns.
+
+        A truncated dimension is computed inside ``semantic_view()`` under its alias, so
+        the outer query selects that column rather than repeating the expression.
+
+        Args:
+            field: A selected dimension or fact.
+
+        Returns:
+            The quoted column.
+        """
+        from semolina.fields import GrainedDimension
+
+        if isinstance(field, GrainedDimension):
+            return self._field_alias(field)
+        return super()._dimension_expression(field)
 
     def _metrics_to_request(
         self, query: Query, post_filter: Predicate | None, model: Any

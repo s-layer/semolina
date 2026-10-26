@@ -215,6 +215,11 @@ Data the schema accepts builds, with two exceptions that JSON Schema can't expre
 ordering by a dimension the query doesn't select, and the other is a date string that
 doesn't parse. Both still raise ``SemolinaSpecError``, so catch it in the tool either way.
 
+Grains work by name too. ``"ordered_at__week"`` in ``dimensions`` or ``order_by`` selects
+``Orders.ordered_at.grain("week")``, and the schema lists those names for every dimension
+declared as a ``date`` or ``datetime``. A filter leaf names the base field, as
+:ref:`howto-time-grain` explains.
+
 To look up a single field, use :py:func:`~semolina.spec.field_by_name`. It returns the same
 descriptor as attribute access, so ``field_by_name(Sales, "revenue") is Sales.revenue``.
 
@@ -222,5 +227,6 @@ See also
 --------
 
 - :ref:`howto-queries`: the attribute-based query builder this module produces queries for
+- :ref:`howto-time-grain`: grouping a date dimension by week, month or another period
 - :ref:`howto-filtering`: every filter operator and how it compiles on each backend
 - :ref:`howto-web-api`: running queries inside a FastAPI service

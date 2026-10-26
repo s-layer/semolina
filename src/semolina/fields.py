@@ -7,13 +7,27 @@ Fields use the descriptor protocol for class-level access and validation.
 
 from __future__ import annotations
 
+import datetime
 import keyword
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, Self, TypeVar, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    Literal,
+    Self,
+    TypeAlias,
+    TypeVar,
+    get_args,
+    overload,
+)
 
 __all__ = [
+    "GRAINS",
     "RESERVED_FIELD_NAMES",
+    "Grain",
+    "GrainedDimension",
     "NullsOrdering",
     "Field",
     "Metric",
@@ -47,6 +61,15 @@ RESERVED_FIELD_NAMES = frozenset(
         "clear",  # dict methods
     }
 )
+
+Grain: TypeAlias = Literal["year", "quarter", "month", "week", "day", "hour", "minute", "second"]
+"""A time grain that :meth:`Dimension.grain` accepts, from the units all three backends share."""
+
+GRAINS: tuple[Grain, ...] = get_args(Grain)
+"""Every :data:`Grain`, coarsest first."""
+
+_DATE_GRAINS = frozenset(GRAINS[: GRAINS.index("day") + 1])
+"""The grains a ``DATE`` can be truncated to, and those whose result is a ``DATE``."""
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -261,6 +284,18 @@ class Field(Generic[T]):
             return f"{cls_name}('{self.name}', source='{self.source}')"
         return f"{cls_name}('{self.name}')"
 
+    def _filter_name(self) -> str:
+        """
+        Return the name a filter predicate on this field carries.
+
+        Returns:
+            The field's name.
+
+        Raises:
+            RuntimeError: If the field is not bound to a model yet.
+        """
+        return _check_name(self.name)
+
     # -- Comparison operators returning Predicate nodes -----------------------
 
     def __eq__(self, value: Any) -> Exact:
@@ -282,7 +317,7 @@ class Field(Generic[T]):
                 >>> Users.country == 'US'  # doctest: +SKIP
                 Exact(field_name='country', value='US')
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import Exact as _Exact
 
         return _Exact(field_name=name, value=value, source=self.source)
@@ -308,7 +343,7 @@ class Field(Generic[T]):
                 >>> Users.country != 'US'  # doctest: +SKIP
                 NotEqual(field_name='country', value='US')
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import NotEqual as _NotEqual
 
         return _NotEqual(field_name=name, value=value, source=self.source)
@@ -333,7 +368,7 @@ class Field(Generic[T]):
                 >>> Users.age < 30  # doctest: +SKIP
                 Lt(field_name='age', value=30)
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import Lt as _Lt
 
         return _Lt(field_name=name, value=value, source=self.source)
@@ -358,7 +393,7 @@ class Field(Generic[T]):
                 >>> Users.age <= 30  # doctest: +SKIP
                 Lte(field_name='age', value=30)
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import Lte as _Lte
 
         return _Lte(field_name=name, value=value, source=self.source)
@@ -383,7 +418,7 @@ class Field(Generic[T]):
                 >>> Users.revenue > 1000  # doctest: +SKIP
                 Gt(field_name='revenue', value=1000)
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import Gt as _Gt
 
         return _Gt(field_name=name, value=value, source=self.source)
@@ -408,7 +443,7 @@ class Field(Generic[T]):
                 >>> Users.revenue >= 1000  # doctest: +SKIP
                 Gte(field_name='revenue', value=1000)
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import Gte as _Gte
 
         return _Gte(field_name=name, value=value, source=self.source)
@@ -440,7 +475,7 @@ class Field(Generic[T]):
                 >>> Sales.revenue.between(100, 1000)  # doctest: +SKIP
                 Between(field_name='revenue', value=(100, 1000))
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import Between as _Between
 
         return _Between(field_name=name, value=(lo, hi), source=self.source)
@@ -468,7 +503,7 @@ class Field(Generic[T]):
                 >>> Sales.country.in_(['US', 'CA', 'UK'])  # doctest: +SKIP
                 In(field_name='country', value=('US', 'CA', 'UK'))
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import In as _In
 
         return _In(field_name=name, value=values, source=self.source)
@@ -489,7 +524,7 @@ class Field(Generic[T]):
                 >>> Users.name.like('%Smith%')  # doctest: +SKIP
                 Like(field_name='name', value='%Smith%')
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import Like as _Like
 
         return _Like(field_name=name, value=pattern, source=self.source)
@@ -510,7 +545,7 @@ class Field(Generic[T]):
                 >>> Users.name.ilike('%smith%')  # doctest: +SKIP
                 ILike(field_name='name', value='%smith%')
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import ILike as _ILike
 
         return _ILike(field_name=name, value=pattern, source=self.source)
@@ -537,7 +572,7 @@ class Field(Generic[T]):
                 >>> Users.name.startswith('A')  # doctest: +SKIP
                 StartsWith(field_name='name', value='A')
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import StartsWith as _StartsWith
 
         return _StartsWith(field_name=name, value=prefix, source=self.source)
@@ -564,7 +599,7 @@ class Field(Generic[T]):
                 >>> Users.name.istartswith('a')  # doctest: +SKIP
                 IStartsWith(field_name='name', value='a')
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import IStartsWith as _IStartsWith
 
         return _IStartsWith(field_name=name, value=prefix, source=self.source)
@@ -591,7 +626,7 @@ class Field(Generic[T]):
                 >>> Users.name.endswith('son')  # doctest: +SKIP
                 EndsWith(field_name='name', value='son')
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import EndsWith as _EndsWith
 
         return _EndsWith(field_name=name, value=suffix, source=self.source)
@@ -618,7 +653,7 @@ class Field(Generic[T]):
                 >>> Users.name.iendswith('SON')  # doctest: +SKIP
                 IEndsWith(field_name='name', value='SON')
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import IEndsWith as _IEndsWith
 
         return _IEndsWith(field_name=name, value=suffix, source=self.source)
@@ -645,7 +680,7 @@ class Field(Generic[T]):
                 >>> Users.country.iexact('united states')  # doctest: +SKIP
                 IExact(field_name='country', value='united states')
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import IExact as _IExact
 
         return _IExact(field_name=name, value=value, source=self.source)
@@ -663,7 +698,7 @@ class Field(Generic[T]):
                 >>> Users.country.isnull()  # doctest: +SKIP
                 IsNull(field_name='country', value=True)
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         from .filters import IsNull as _IsNull
 
         return _IsNull(field_name=name, value=True, source=self.source)
@@ -693,7 +728,7 @@ class Field(Generic[T]):
                 >>> Users.country.lookup(Exact, 'US')  # doctest: +SKIP
                 Exact(field_name='country', value='US')
         """
-        name = _check_name(self.name)
+        name = self._filter_name()
         return lookup_cls(field_name=name, value=value, source=self.source)
 
     # -- Ordering methods -----------------------------------------------------
@@ -760,7 +795,174 @@ class Dimension(Field[T]):
     grouping and filtering, such as country, product_category, date.
     """
 
-    pass
+    def __init__(self, source: str | None = None) -> None:
+        """
+        Initialize the dimension.
+
+        Args:
+            source: Optional explicit SQL column name. See :class:`Field`.
+        """
+        super().__init__(source)
+        self._grains: dict[str, GrainedDimension] = {}
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        """
+        Bind the dimension to its model, forgetting grains made for any earlier owner.
+
+        A subclass model gets a shallow copy of each inherited field, so without the reset
+        the copy would share its parent's cache and hand out grains bound to the parent.
+
+        Args:
+            owner: The class that owns this field.
+            name: The name of the attribute.
+        """
+        super().__set_name__(owner, name)
+        self._grains = {}
+
+    def grain(self, unit: Grain) -> GrainedDimension:
+        """
+        Select this date or timestamp dimension truncated to a coarser time grain.
+
+        Use the result in ``.dimensions()`` and ``.order_by()`` like any dimension. Its
+        result column is named ``<field>__<unit>`` (``ordered_at__week``), and the query
+        truncates in the warehouse, so a metric is aggregated per week rather than per day.
+
+        The value is the start of the period. Weeks start on Monday on every backend
+        (Snowflake's ``WEEK_START`` session parameter does not change it). A grain of a day
+        or coarser comes back as a ``DATE``, and an hour, minute or second as a
+        ``TIMESTAMP``, whichever backend runs the query.
+
+        Args:
+            unit: One of :data:`GRAINS`: ``"year"``, ``"quarter"``, ``"month"``, ``"week"``,
+                ``"day"``, ``"hour"``, ``"minute"`` or ``"second"``.
+
+        Returns:
+            The truncated dimension. Calling ``grain()`` again with the same unit returns
+            the same object.
+
+        Raises:
+            ValueError: If ``unit`` is not a grain, is finer than the dimension holds (an
+                hour of a ``Dimension[datetime.date]``), or its column name is already a
+                field of the model.
+            TypeError: If the dimension is declared with a type that is not a date or
+                timestamp, or is itself a truncated dimension.
+
+        Example:
+            .. code-block:: python
+
+                Orders.query(
+                    metrics=[Orders.revenue],
+                    dimensions=[Orders.ordered_at.grain("week")],
+                )
+                # rows keyed {"revenue": ..., "ordered_at__week": datetime.date(...)}
+        """
+        if unit not in GRAINS:
+            raise ValueError(
+                f"grain() takes one of {', '.join(repr(g) for g in GRAINS)}, got {unit!r}"
+            )
+        cached = self._grains.get(unit)
+        if cached is not None:
+            return cached
+        name = _check_name(self.name)
+        declared = _declared_type(self)
+        if declared is datetime.date and unit not in _DATE_GRAINS:
+            raise ValueError(
+                f"{name!r} is a date, so it has no {unit!r} grain. The finest is 'day'."
+            )
+        if declared is not None and declared not in (datetime.date, datetime.datetime):
+            type_name = getattr(declared, "__name__", repr(declared))
+            raise TypeError(
+                f"grain() truncates a date or timestamp, and {name!r} is declared as {type_name}."
+            )
+        grained = GrainedDimension(self, unit)
+        owner_fields: dict[str, Any] = dict(getattr(self.owner, "_fields", {}))
+        if grained.name in owner_fields:
+            raise ValueError(
+                f"{name}.grain({unit!r}) would return a column named {grained.name!r}, "
+                f"which is already a field of {getattr(self.owner, '__name__', 'the model')}."
+            )
+        self._grains[unit] = grained
+        return grained
+
+
+def _declared_type(field: Field[Any]) -> object:
+    """
+    Return the type a field was declared with, as in ``Dimension[datetime.date]()``.
+
+    Args:
+        field: A field.
+
+    Returns:
+        The type argument, or ``None`` for a field declared without one.
+    """
+    orig = getattr(field, "__orig_class__", None)
+    args = get_args(orig) if orig is not None else ()
+    return args[0] if args else None
+
+
+class GrainedDimension(Dimension[Any]):
+    """
+    A date or timestamp dimension truncated to a coarser grain, from :meth:`Dimension.grain`.
+
+    It selects and orders like a dimension, under the name ``<field>__<unit>``. It cannot
+    be filtered: filter the dimension it came from, which narrows rows before they are
+    grouped (``Orders.ordered_at >= datetime.date(2024, 1, 1)``).
+
+    Attributes:
+        base: The dimension being truncated.
+        unit: The grain it is truncated to.
+    """
+
+    def __init__(self, base: Dimension[Any], unit: Grain) -> None:
+        """
+        Bind the truncated dimension to its base's model.
+
+        Args:
+            base: The dimension being truncated, already bound to a model.
+            unit: The grain.
+        """
+        # No source of its own: the builder reads the base's column and truncates it.
+        super().__init__()
+        self.base = base
+        self.unit: Grain = unit
+        self.name = f"{_check_name(base.name)}__{unit}"
+        self.owner = base.owner
+
+    @property
+    def result_is_date(self) -> bool:
+        """Whether the truncated value is a ``DATE`` (a day or coarser) or a ``TIMESTAMP``."""
+        return self.unit in _DATE_GRAINS
+
+    def __repr__(self) -> str:
+        """Show the base field and the grain, as the call that made it reads."""
+        return f"{self.base!r}.grain({self.unit!r})"
+
+    def grain(self, unit: Grain) -> GrainedDimension:
+        """
+        Refuse to truncate twice; truncate the base dimension instead.
+
+        Args:
+            unit: The grain asked for.
+
+        Raises:
+            TypeError: Always.
+        """
+        raise TypeError(
+            f"{self.name!r} is already truncated. Call grain({unit!r}) on "
+            f"{self.base.name!r} instead."
+        )
+
+    def _filter_name(self) -> str:
+        """
+        Refuse a filter on a truncated dimension.
+
+        Raises:
+            TypeError: Always, naming the base dimension to filter instead.
+        """
+        raise TypeError(
+            f"{self.name!r} cannot be filtered. Filter {self.base.name!r} instead, which "
+            f"narrows the rows before they are grouped by {self.unit}."
+        )
 
 
 class Fact(Field[T]):

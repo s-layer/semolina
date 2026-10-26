@@ -39,9 +39,10 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
+from orders import expected_by_grain
 
 from semolina import Dimension, Metric, SemanticView
-from semolina.fields import NullsOrdering
+from semolina.fields import GRAINS, NullsOrdering
 
 # Every test in this module records/replays an ADBC cassette. The cassette name
 # is auto-derived from the node id (including the [snowflake_engine] /
@@ -598,3 +599,87 @@ def test_question_mark_in_identifier_survives_binding(backend_engine: Any) -> No
     finally:
         cursor.close()
     assert rows == [(3, "a?")]
+
+
+class Orders(SemanticView, view="orders_view"):
+    """The ``orders_view`` the recording fixtures create, for the time grain tests."""
+
+    revenue = Metric[int]()
+    ordered_at = Dimension[datetime.datetime]()
+    ordered_on = Dimension[datetime.date]()
+
+
+@pytest.mark.parametrize("unit", GRAINS)
+def test_revenue_by_timestamp_grain(backend_engine: Any, unit: str) -> None:  # noqa: ARG001
+    """
+    Revenue by each grain of a timestamp matches the calendar oracle, values and types.
+
+    The oracle (``orders.truncate``) is written from the calendar, so a backend that
+    started weeks on Sunday, or a grain that cut at the wrong boundary, changes a total. A
+    day or coarser must come back as ``date`` on both backends, a finer grain as
+    ``datetime``.
+    """
+    period = Orders.ordered_at.grain(unit)  # pyright: ignore[reportArgumentType]
+    cursor = (
+        Orders.query()
+        .using("test")
+        .metrics(Orders.revenue)
+        .dimensions(period)
+        .order_by(period)
+        .execute()
+    )
+    try:
+        rows = _rows(cursor.fetchall())
+    finally:
+        cursor.close()
+    assert rows == expected_by_grain(unit)
+    want = datetime.date if period.result_is_date else datetime.datetime
+    assert all(type(value) is want for _, value in rows), rows
+
+
+@pytest.mark.parametrize("unit", ["year", "quarter", "month", "week", "day"])
+def test_revenue_by_date_grain(backend_engine: Any, unit: str) -> None:  # noqa: ARG001
+    """A ``DATE`` dimension truncates to the same periods, and stays a ``date``."""
+    period = Orders.ordered_on.grain(unit)  # pyright: ignore[reportArgumentType]
+    cursor = (
+        Orders.query()
+        .using("test")
+        .metrics(Orders.revenue)
+        .dimensions(period)
+        .order_by(period.desc())
+        .execute()
+    )
+    try:
+        rows = _rows(cursor.fetchall())
+    finally:
+        cursor.close()
+    assert rows == list(reversed(expected_by_grain(unit, from_date=True)))
+    assert all(type(value) is datetime.date for _, value in rows), rows
+
+
+def test_grain_beside_its_base_and_filtered_by_it(backend_engine: Any) -> None:  # noqa: ARG001
+    """
+    A grain and a filter on its base dimension combine: weekly revenue from April on.
+
+    The filter applies to ``ordered_at`` before grouping, so the week of 25 March keeps
+    none of its rows.
+    """
+    week = Orders.ordered_at.grain("week")
+    cursor = (
+        Orders.query()
+        .using("test")
+        .metrics(Orders.revenue)
+        .dimensions(week)
+        .where(Orders.ordered_at >= datetime.datetime(2024, 4, 1))
+        .order_by(week)
+        .execute()
+    )
+    try:
+        rows = _rows(cursor.fetchall())
+    finally:
+        cursor.close()
+    assert rows == [
+        (4 + 8 + 16 + 32 + 64, datetime.date(2024, 4, 1)),
+        (128, datetime.date(2024, 4, 8)),
+        (256 + 512, datetime.date(2024, 12, 30)),
+    ]
