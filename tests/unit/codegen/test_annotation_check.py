@@ -1276,9 +1276,24 @@ class TestMetadataIsComparedToo:
         assert row.status == STATUS_MATCH, row.detail
 
     def test_a_label_is_not_compared_where_the_backend_has_no_slot_for_one(
-        self, annotated_engine: Engine
+        self, annotated_engine: Engine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """DuckDB reports no labels, so a hand-written ``label=`` cannot have drifted."""
+        """
+        A view that cannot hold a label cannot have drifted from a hand-written ``label=``.
+
+        DuckDB reads labels from tags, which ``semantic_views`` stores from 0.17.0, so a view
+        on an earlier extension reports its labels unread.
+        """
+        import dataclasses
+
+        engine_type = type(annotated_engine)
+        introspect = engine_type.introspect
+
+        def untagged(self: Engine, view_name: str) -> IntrospectedView:
+            view = introspect(self, view_name)
+            return dataclasses.replace(view, unread_metadata=frozenset({"label"}))
+
+        monkeypatch.setattr(engine_type, "introspect", untagged)
         committed = committed_from_warehouse(annotated_engine, "annotated")
         labelled = self.with_metadata(
             committed, "country", label="Country", synonyms=("nation", "land")
@@ -1291,8 +1306,17 @@ class TestMetadataIsComparedToo:
     def test_a_label_is_compared_where_the_backend_reads_one(
         self, annotated_engine: Engine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        import dataclasses
+
+        engine_type = type(annotated_engine)
+        introspect = engine_type.introspect
+
+        def tagged(self: Engine, view_name: str) -> IntrospectedView:
+            return dataclasses.replace(introspect(self, view_name), unread_metadata=frozenset())
+
+        monkeypatch.setattr(engine_type, "introspect", tagged)
         monkeypatch.setattr(
-            type(annotated_engine),
+            engine_type,
             "introspected_metadata",
             frozenset({"description", "label", "synonyms"}),
         )
@@ -1333,7 +1357,7 @@ class TestMetadataIsComparedToo:
                 else f
                 for f in view.fields
             ]
-            return dataclasses.replace(view, fields=fields)
+            return dataclasses.replace(view, fields=fields, unread_metadata=frozenset())
 
         monkeypatch.setattr(engine_type, "introspect", tagged)
         monkeypatch.setattr(

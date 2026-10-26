@@ -24,8 +24,8 @@ in scope (threat T-48-22).
 
 **Metadata drifts too.** A field's ``description=``, ``label=``, ``synonyms=`` and
 ``semantic_format=`` are compared against what the engine introspects
-(``Engine.introspected_metadata``), as is the class's ``description=`` against the view's
-comment. A mismatch is drift, not a merge: the
+(``Engine.introspected_metadata``, less any the view's ``unread_metadata`` names), as is the
+class's ``description=`` against the view's comment. A mismatch is drift, not a merge: the
 warehouse is what the model was generated from, so the committed copy is the stale one.
 
 The generation path is deliberately untouched by all of this: ``semolina codegen`` still
@@ -643,6 +643,7 @@ def check_view(engine: Engine, view_name: str, committed: CommittedModel | None)
             # False
     """
     view = engine.introspect(view_name)
+    compared = engine.introspected_metadata - view.unread_metadata
     probes, probe_error = _probe_view(engine, view)
 
     committed_fields, renamed = (
@@ -686,7 +687,7 @@ def check_view(engine: Engine, view_name: str, committed: CommittedModel | None)
                 d
                 for d in (
                     _non_annotation_drift(engine.dialect, field, committed_field),
-                    _metadata_drift(engine.introspected_metadata, field, committed_field),
+                    _metadata_drift(compared, field, committed_field),
                 )
                 if d
             )
@@ -730,7 +731,7 @@ def check_view(engine: Engine, view_name: str, committed: CommittedModel | None)
             )
         )
 
-    view_detail = _view_metadata_drift(engine.introspected_metadata, view, committed)
+    view_detail = _view_metadata_drift(compared, view, committed)
     return ViewCheckReport(
         view_name=view_name,
         rows=rows,

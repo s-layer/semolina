@@ -507,9 +507,9 @@ Where the warehouse holds them
      - the ``S_LAYER_KIND`` and ``S_LAYER_SPEC`` column tags, else the native ``format``
    * - DuckDB
      - the member's ``COMMENT``
-     - (not read)
+     - the ``S_LAYER_LABEL`` tag
      - ``WITH SYNONYMS``
-     - (not read)
+     - the ``S_LAYER_KIND`` and ``S_LAYER_SPEC`` tags
 
 The view's own comment becomes the model's ``description=``.
 
@@ -536,8 +536,13 @@ date format, ``leading_zeros`` and ``time_format`` have no slot and aren't read.
 S-LAYER kind, so that column gets no ``semantic_format``. When a column has both, the tags
 win, because they hold more than ``format`` can (a ``count`` rather than a ``number``, say).
 
-Semolina reads no ``S_LAYER_*`` tags on DuckDB, so a model generated from a DuckDB view
-never gets a ``label=`` or ``semantic_format=``. You can add them by hand.
+On DuckDB the tags come from the ``TAGS`` row of ``DESCRIBE SEMANTIC VIEW``, which
+needs version 0.17.0 or later of the ``semantic_views`` extension. DuckDB matches
+identifiers case-insensitively, so ``s_layer_kind`` is the ``S_LAYER_KIND`` tag, and a
+qualified name such as ``gov.S_LAYER_KIND`` counts by its last part. An earlier extension
+can't store tags, so a model generated with it never gets a ``label=`` or
+``semantic_format=``: you can add them by hand, and ``codegen --check`` leaves them alone
+until the extension can hold them.
 
 The metadata travels from the warehouse to your model. Change a description in the
 warehouse and regenerate, rather than editing the Python, since ``codegen --check``

@@ -17,6 +17,15 @@ hand gets one too. The tags still win where both are present. See
 earlier release has no ``semantic_format=``, so ``codegen --check`` reports it as drift
 until you regenerate it.
 
+**Labels and formats from DuckDB tags.** ``semolina codegen`` now reads a DuckDB
+semantic view member's ``S_LAYER_LABEL``, ``S_LAYER_KIND`` and ``S_LAYER_SPEC`` tags into
+``label=`` and ``semantic_format=``, as it does on Snowflake, so a view dbt-s-layer
+writes with tags gets them. The tags need version 0.17.0 or later of the
+``semantic_views`` extension; on an earlier one ``codegen --check`` doesn't compare a
+``label=`` or ``semantic_format=`` you added by hand. On 0.17.0 or later it does, so a
+hand-added one that the view's tags don't hold is reported as drift: move it into the
+view's tags, or drop it. See :ref:`howto-models-metadata`.
+
 **DuckDB 2.0.** The ``duckdb`` extra now pins DuckDB 2.0.0, which installs version 0.16.0
 or later of the ``semantic_views`` extension, so time grains run on DuckDB.
 ``semantic_views`` 0.16.0 keeps DuckDB's own result types, which changes one you may rely

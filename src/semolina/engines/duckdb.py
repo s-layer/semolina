@@ -12,6 +12,7 @@ loaded by the pool's ``connect`` event listener (wired in ``create_engine``).
 from __future__ import annotations
 
 import contextlib
+import json
 import re
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, ClassVar, cast
@@ -74,28 +75,125 @@ _EXTENSION_VERSION_SQL = (
 """The catalogue query that reads the loaded ``semantic_views`` extension's version."""
 
 
-def _reports_member_types(cursor: Any) -> bool:
+_TAGS_SINCE = (0, 17, 0)
+"""
+The first ``semantic_views`` release that stores member tags and reports them in ``DESCRIBE``.
+
+Before it a member has nowhere to hold the ``S_LAYER_*`` tags its label and format are read
+from, so their absence says nothing about the model.
+"""
+
+
+def _extension_release(cursor: Any) -> tuple[int, ...] | None:
     """
-    Say whether the loaded ``semantic_views`` extension reports member types in ``DESCRIBE``.
+    Read the loaded ``semantic_views`` extension's release number.
 
     Args:
         cursor: An open ADBC cursor on a DuckDB connection with the extension loaded.
 
     Returns:
-        ``True`` when the extension's version is at least :data:`_MEMBER_TYPES_SINCE`.
-        ``False`` for an older release, and for a version that is not a plain release number
-        (a local build reports its commit hash; a pre-release or ``git describe`` version
-        carries a suffix and may predate the feature), so an unknown build is probed rather
-        than trusted.
+        The release as ``(major, minor, patch)``, or None for a version that is not a plain
+        release number: a local build reports its commit hash, and a pre-release or
+        ``git describe`` version carries a suffix and may predate any feature.
     """
     cursor.execute(_EXTENSION_VERSION_SQL)
     row = cursor.fetchone()
     if row is None or row[0] is None:
-        return False
+        return None
     match = _EXTENSION_VERSION.fullmatch(row[0])
     if match is None:
-        return False
-    return tuple(int(part) for part in match.groups()) >= _MEMBER_TYPES_SINCE
+        return None
+    return tuple(int(part) for part in match.groups())
+
+
+def _tag_base_name(name: str) -> str:
+    """
+    Take the tag's own name from a possibly qualified one, as ``DESCRIBE`` writes it.
+
+    The extension writes a tag name as the DDL spelled it: ``S_LAYER_KIND``,
+    ``gov.S_LAYER_KIND`` or ``db.gov."Owner Tag"``, quoting a part that needs it and doubling
+    a ``"`` inside one.
+
+    Args:
+        name: The tag name as a key of the ``TAGS`` JSON object.
+
+    Returns:
+        Its last part, unquoted.
+    """
+    parts: list[str] = []
+    part: list[str] = []
+    quoted = False
+    i = 0
+    while i < len(name):
+        ch = name[i]
+        if quoted:
+            if ch == '"' and name[i + 1 : i + 2] == '"':
+                part.append('"')
+                i += 1
+            elif ch == '"':
+                quoted = False
+            else:
+                part.append(ch)
+        elif ch == '"':
+            quoted = True
+        elif ch == ".":
+            parts.append("".join(part))
+            part = []
+        else:
+            part.append(ch)
+        i += 1
+    parts.append("".join(part))
+    return parts[-1]
+
+
+def _s_layer_tags(member: str, tags_json: str | None) -> dict[str, str]:
+    """
+    Read a member's ``S_LAYER_*`` tags from its ``TAGS`` row in ``DESCRIBE SEMANTIC VIEW``.
+
+    DuckDB matches identifiers case-insensitively, quoted or not, so a tag named
+    ``s_layer_kind`` or ``"S_Layer_Kind"`` is the ``S_LAYER_KIND`` tag. A qualified name
+    counts by its last part, as Snowflake's ``TAG_REFERENCES`` reports a tag by its own name
+    whichever schema holds it.
+
+    Args:
+        member: The member's name, for the error message.
+        tags_json: The ``TAGS`` row's value, a JSON object of tag name to value, or None when
+            the member has no tags.
+
+    Returns:
+        ``S_LAYER_KIND``, ``S_LAYER_LABEL`` and ``S_LAYER_SPEC`` to their values, for those
+        the member has. Other tags are left out.
+
+    Raises:
+        ValueError: If the value is not a JSON object of strings, or two of the member's tags
+            are the same ``S_LAYER_*`` tag under different qualifications.
+    """
+    from semolina.codegen.introspector import S_LAYER_KIND, S_LAYER_LABEL, S_LAYER_SPEC
+
+    if not tags_json:
+        return {}
+    try:
+        tags = json.loads(tags_json)
+    except json.JSONDecodeError:
+        tags = None
+    if not isinstance(tags, dict):
+        msg = f"The TAGS of {member!r} are not a JSON object: {tags_json!r}"
+        raise ValueError(msg)
+    found: dict[str, str] = {}
+    names: dict[str, str] = {}
+    for name, value in cast("dict[str, object]", tags).items():
+        base = _tag_base_name(name).upper()
+        if base not in (S_LAYER_KIND, S_LAYER_LABEL, S_LAYER_SPEC):
+            continue
+        if not isinstance(value, str):
+            msg = f"The {name} tag on {member!r} is not a string: {value!r}"
+            raise ValueError(msg)
+        if base in found:
+            msg = f"{member!r} has two {base} tags: {names[base]} and {name}"
+            raise ValueError(msg)
+        found[base] = value
+        names[base] = name
+    return found
 
 
 def _to_pascal_case(view_name: str) -> str:
@@ -201,6 +299,8 @@ def _introspect_duckdb(cursor: Any, view_name: str, *, described: str) -> Intros
         Intermediate representation of the view, ready for code rendering.
     """
     from semolina.codegen.introspector import (
+        S_LAYER_LABEL,
+        semantic_format_from_tags,
         synonyms_from_json,
         with_python_field_names,
     )
@@ -228,7 +328,8 @@ def _introspect_duckdb(cursor: Any, view_name: str, *, described: str) -> Intros
     # Step 2: Take each member's type from DESCRIBE's DATA_TYPE row where the extension
     # reports one, and probe `DESCRIBE SELECT * FROM semantic_view(...)` for the rest.
     type_map: dict[str, str] = {}
-    if _reports_member_types(cursor):
+    release = _extension_release(cursor)
+    if release is not None and release >= _MEMBER_TYPES_SINCE:
         for described_name in (*dims, *public_metrics, *public_facts):
             reported = parsed[described_name].get("data_type", "")
             if reported:
@@ -283,15 +384,19 @@ def _introspect_duckdb(cursor: Any, view_name: str, *, described: str) -> Intros
             data_type = None
 
         description = props.get("comment", "")
+        field_type = cast("Literal['metric', 'dimension', 'fact']", props["kind"])
+        tags = _s_layer_tags(field_name, props.get("tags"))
 
         fields.append(
             IntrospectedField(
                 name=field_name,
-                field_type=cast("Literal['metric', 'dimension', 'fact']", props["kind"]),
+                field_type=field_type,
                 data_type=data_type,
                 description=description,
                 raw_type=sql_type,
+                label=tags.get(S_LAYER_LABEL) or None,
                 synonyms=synonyms_from_json(props.get("synonyms")),
+                semantic_format=semantic_format_from_tags(field_name, tags, field_type),
             )
         )
 
@@ -300,6 +405,14 @@ def _introspect_duckdb(cursor: Any, view_name: str, *, described: str) -> Intros
         class_name=_to_pascal_case(view_name),
         fields=with_python_field_names(fields, columns),
         description=_view_comment(raw_rows),
+        # A TAGS row proves the extension stores tags whatever its version says, as a local
+        # build's commit hash does not.
+        unread_metadata=(
+            frozenset()
+            if (release is not None and release >= _TAGS_SINCE)
+            or any("tags" in props for props in parsed.values())
+            else frozenset({"label", "semantic_format"})
+        ),
     )
 
 
@@ -353,7 +466,8 @@ class DuckDBEngine(Engine):
     pooled ADBC connection:
 
     1. ``DESCRIBE SEMANTIC VIEW`` for field names, kinds, access modifiers,
-       comments and, from extension v0.14.0, each member's SQL type.
+       comments, from extension v0.14.0 each member's SQL type, and from v0.17.0
+       its ``S_LAYER_*`` tags.
     2. ``DESCRIBE SELECT * FROM semantic_view(...)`` for the SQL types of any
        members step 1 left untyped: every member on an older extension.
 
@@ -378,7 +492,9 @@ class DuckDBEngine(Engine):
         - semolina.codegen.python_renderer: Code generation from IntrospectedView
     """
 
-    introspected_metadata: ClassVar[frozenset[str]] = frozenset({"description", "synonyms"})
+    introspected_metadata: ClassVar[frozenset[str]] = frozenset(
+        {"description", "label", "synonyms", "semantic_format"}
+    )
 
     def introspect(self, view_name: str) -> IntrospectedView:
         """
@@ -391,6 +507,9 @@ class DuckDBEngine(Engine):
            comments and SQL types. The ``semantic_views`` extension reports a
            member's ``DATA_TYPE`` from v0.14.0; older releases leave it empty
            for any view created since v0.10.0, so their types are not used.
+           From v0.17.0 a member's ``TAGS`` row gives its ``S_LAYER_LABEL``,
+           ``S_LAYER_KIND`` and ``S_LAYER_SPEC`` tags, read as on Snowflake into
+           its label and format; before it the view reports them unread.
         2. ``DESCRIBE SELECT * FROM semantic_view(...)`` to resolve the SQL
            type of each member step 1 left untyped: all of them on an older
            extension, and on a newer one only a member the extension could not
@@ -421,7 +540,8 @@ class DuckDBEngine(Engine):
                 because its definition no longer binds (any other ADBC
                 :class:`~adbc_driver_manager.Error`).
             ValueError: If a quoted part of ``view_name`` contains a ``.`` or leaves a
-                quote unbalanced.
+                quote unbalanced, or a member's ``S_LAYER_*`` tags cannot be read or do not
+                make a valid format for it.
 
         Example:
             .. code-block:: python
