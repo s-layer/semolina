@@ -9,7 +9,7 @@ the engine's owned ADBC pool.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from semolina.engines.base import Engine, _translate_introspection_errors
@@ -27,7 +27,7 @@ __all__ = [
 ]
 
 
-def _qualify_view_name(cursor: Any, view_name: str) -> str:
+def _qualify_view_name(cursor: Any, view_name: str) -> tuple[str, str]:
     """
     Complete a view name to the ``database.schema.view`` path SHOW COLUMNS requires.
 
@@ -42,9 +42,11 @@ def _qualify_view_name(cursor: Any, view_name: str) -> str:
         view_name: ``view``, ``schema.view`` or ``database.schema.view``.
 
     Returns:
-        The three-part name, each part quoted. The caller's parts are folded and quoted as
-        a query's ``FROM`` would be; the session's are quoted as returned, since they are
-        already the stored names. A three-part name needs no query.
+        The quoted database part, and the three-part name with each part quoted. The
+        caller's parts are folded and quoted as a query's ``FROM`` would be; the session's
+        are quoted as returned, since they are already the stored names. A three-part name
+        needs no query. The database comes back on its own because a session database may
+        contain a ``.``, so it cannot be split back out of the full name.
 
     Raises:
         SemolinaViewNotFoundError: If the session has no current database or schema to
@@ -56,7 +58,8 @@ def _qualify_view_name(cursor: Any, view_name: str) -> str:
     quoted = dialect.quote_table_name(view_name)
     parts = view_name.split(".")
     if len(parts) >= 3:
-        return quoted
+        # A quoted part of the caller's name cannot contain a ``.``, so this split is exact.
+        return quoted.split(".")[0], quoted
 
     cursor.execute("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")
     database, schema = cursor.fetchone()
@@ -68,7 +71,8 @@ def _qualify_view_name(cursor: Any, view_name: str) -> str:
             "database.schema.view, or set database and schema in the connection config."
         )
         raise SemolinaViewNotFoundError(msg)
-    return ".".join([*(dialect.quote_identifier(part) for part in missing), quoted])
+    session_parts = [dialect.quote_identifier(part) for part in missing]
+    return session_parts[0], ".".join([*session_parts, quoted])
 
 
 def _to_pascal_case(view_name: str) -> str:
@@ -86,21 +90,41 @@ def _to_pascal_case(view_name: str) -> str:
     return class_name_for(view_name)
 
 
-def _describe_annotations(
-    cursor: Any, qualified_name: str
-) -> tuple[dict[str, tuple[str, ...]], str]:
-    """
-    Read member synonyms and the view's own comment from ``DESCRIBE SEMANTIC VIEW``.
+_TAG_DOMAINS = {
+    "DIMENSION": "SEMANTIC DIMENSION",
+    "FACT": "SEMANTIC FACT",
+    "METRIC": "SEMANTIC METRIC",
+    "DERIVED_METRIC": "SEMANTIC METRIC",
+}
+"""``TAG_REFERENCES``' domain for each member kind ``DESCRIBE SEMANTIC VIEW`` reports."""
 
-    ``SHOW COLUMNS IN VIEW`` reports each member's comment but not its synonyms, and nothing
-    about the view itself, so this second statement fills those in.
+
+@dataclass
+class _Described:
+    """What ``DESCRIBE SEMANTIC VIEW`` adds to ``SHOW COLUMNS``."""
+
+    synonyms: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    """Member name (as stored) to its synonyms."""
+    members: dict[str, tuple[str, str | None]] = field(default_factory=dict)
+    """Member name to its kind and logical table (None for a derived metric)."""
+    view_comment: str = ""
+    """The view's own comment, empty when it has none."""
+
+
+def _describe_annotations(cursor: Any, qualified_name: str) -> _Described:
+    """
+    Read member synonyms, tables and the view's own comment from ``DESCRIBE SEMANTIC VIEW``.
+
+    ``SHOW COLUMNS IN VIEW`` reports each member's comment but not its synonyms, the
+    logical table it belongs to (which reading its tags needs), or anything about the view
+    itself, so this second statement fills those in.
 
     Args:
         cursor: An open ADBC cursor on a Snowflake connection.
         qualified_name: The quoted three-part view name.
 
     Returns:
-        Member name (as stored) to its synonyms, and the view's comment (empty when none).
+        The synonyms, members and view comment.
 
     Raises:
         ValueError: If a ``SYNONYMS`` value is not a JSON list of strings.
@@ -109,16 +133,102 @@ def _describe_annotations(
 
     cursor.execute(f"DESCRIBE SEMANTIC VIEW {qualified_name}")
     columns = [desc[0].lower() for desc in cursor.description]
-    synonyms: dict[str, tuple[str, ...]] = {}
-    view_comment = ""
+    described = _Described()
     for row in cursor.fetchall():
         d: dict[str, Any] = dict(zip(columns, row, strict=True))
         kind, prop, value = d.get("object_kind"), d.get("property"), d.get("property_value")
         if not kind and prop == "COMMENT":
-            view_comment = str(value or "")
-        elif kind in ("METRIC", "DIMENSION", "FACT") and prop == "SYNONYMS":
-            synonyms[str(d["object_name"])] = synonyms_from_json(value)
-    return synonyms, view_comment
+            described.view_comment = str(value or "")
+        elif kind in _TAG_DOMAINS:
+            name = str(d["object_name"])
+            parent = d.get("parent_entity")
+            described.members.setdefault(name, (str(kind), str(parent) if parent else None))
+            if prop == "SYNONYMS":
+                described.synonyms[name] = synonyms_from_json(value)
+    return described
+
+
+def _member_tags_sql(
+    database: str, qualified_name: str, members: dict[str, tuple[str, str | None]]
+) -> str:
+    """
+    Build one query reading every member's own ``S_LAYER_*`` tags.
+
+    Snowflake keeps semantic view member tags out of ``DESCRIBE``, ``SHOW`` and the
+    ``SEMANTIC_*`` information schema views. ``TAG_REFERENCES`` reads them, one member at a
+    time and only for constant arguments, so the query is a ``UNION ALL`` of one call per
+    member, each labelled with the member it asked about. ``LEVEL = DOMAIN`` keeps the
+    member's own tags: a tag set on the view or a logical table is inherited by every
+    member and reported with the view's or table's level.
+
+    Args:
+        database: The view's quoted database, whose ``INFORMATION_SCHEMA`` holds the function.
+        qualified_name: The quoted three-part view name.
+        members: Member name to its kind and logical table, from :func:`_describe_annotations`.
+
+    Returns:
+        A query returning one ``(MEMBER, TAG_NAME, TAG_VALUE)`` row per tag.
+    """
+    from semolina.codegen.introspector import S_LAYER_KIND, S_LAYER_LABEL, S_LAYER_SPEC
+    from semolina.engines.sql import SnowflakeDialect
+
+    dialect = SnowflakeDialect()
+    quote, literal = dialect.quote_identifier, dialect.render_literal
+    calls = []
+    for name, (kind, table) in members.items():
+        path = (
+            f"{qualified_name}!{quote(table)}.{quote(name)}"
+            if table
+            else (f"{qualified_name}!{quote(name)}")
+        )
+        calls.append(
+            f"SELECT {literal(name)} AS MEMBER, TAG_NAME, TAG_VALUE, LEVEL, DOMAIN"
+            f" FROM TABLE({database}.INFORMATION_SCHEMA.TAG_REFERENCES("
+            f"{literal(path)}, {literal(_TAG_DOMAINS[kind])}))"
+        )
+    names = ", ".join(literal(t) for t in (S_LAYER_KIND, S_LAYER_LABEL, S_LAYER_SPEC))
+    return (
+        "SELECT MEMBER, TAG_NAME, TAG_VALUE FROM ("
+        + " UNION ALL ".join(calls)
+        + f") WHERE LEVEL = DOMAIN AND TAG_NAME IN ({names})"
+    )
+
+
+def _member_tags(
+    cursor: Any, database: str, qualified_name: str, members: dict[str, tuple[str, str | None]]
+) -> dict[str, dict[str, str]]:
+    """
+    Read every member's own ``S_LAYER_*`` tags.
+
+    Args:
+        cursor: An open ADBC cursor on a Snowflake connection.
+        database: The view's quoted database.
+        qualified_name: The quoted three-part view name.
+        members: Member name to its kind and logical table.
+
+    Returns:
+        Member name (as stored) to tag name to value. A member with no tags is absent.
+
+    Raises:
+        SemolinaIntrospectionError: If Snowflake refuses the tag lookup. ``SHOW`` and
+            ``DESCRIBE`` have already found the view by then, so this is not reported as a
+            missing view.
+    """
+    from adbc_driver_manager import ProgrammingError
+
+    from semolina.exceptions import SemolinaIntrospectionError
+
+    if not members:
+        return {}
+    try:
+        cursor.execute(_member_tags_sql(database, qualified_name, members))
+    except ProgrammingError as e:
+        msg = f"Snowflake could not read the S_LAYER tags on {qualified_name}: {e}"
+        raise SemolinaIntrospectionError(msg) from e
+    tags: dict[str, dict[str, str]] = {}
+    for member, tag_name, tag_value in cursor.fetchall():
+        tags.setdefault(str(member), {})[str(tag_name)] = str(tag_value)
+    return tags
 
 
 def _introspect_snowflake(cursor: Any, view_name: str) -> IntrospectedView:
@@ -126,8 +236,9 @@ def _introspect_snowflake(cursor: Any, view_name: str) -> IntrospectedView:
     Describe a Snowflake semantic view over an open cursor.
 
     The parsing half of :meth:`SnowflakeEngine.introspect`, kept apart from the connection so
-    any path that holds a cursor can reuse it. Driver errors propagate untranslated; wrap the
-    call in :func:`~semolina.engines.base._translate_introspection_errors` to get Semolina's.
+    any path that holds a cursor can reuse it. Driver errors propagate untranslated, apart
+    from a refused tag lookup; wrap the call in
+    :func:`~semolina.engines.base._translate_introspection_errors` to get Semolina's.
 
     Args:
         cursor: An open ADBC cursor on a Snowflake connection.
@@ -140,18 +251,21 @@ def _introspect_snowflake(cursor: Any, view_name: str) -> IntrospectedView:
     Raises:
         SemolinaViewNotFoundError: If the name needs a database or schema the session does
             not have.
+        SemolinaIntrospectionError: If Snowflake refuses the member tag lookup.
         ValueError: If a quoted part of ``view_name`` contains a ``.`` or leaves a quote
             unbalanced.
     """
     import json
 
     from semolina.codegen.introspector import (
+        S_LAYER_LABEL,
+        semantic_format_from_tags,
         with_python_field_names,
     )
     from semolina.codegen.type_map import snowflake_json_type_to_python
     from semolina.introspection import IntrospectedField, IntrospectedView
 
-    qualified_name = _qualify_view_name(cursor, view_name)
+    database, qualified_name = _qualify_view_name(cursor, view_name)
     cursor.execute(f"SHOW COLUMNS IN VIEW {qualified_name}")
 
     # Build column name list from cursor description (lowercase for safe access)
@@ -161,7 +275,10 @@ def _introspect_snowflake(cursor: Any, view_name: str) -> IntrospectedView:
     column_names: list[str] = []
     for row in cursor.fetchall():
         d: dict[str, Any] = dict(zip(columns, row, strict=True))
-        field_type = cast("Literal['metric', 'dimension', 'fact']", str(d["kind"]).lower())
+        # A view-level derived metric reports its kind as DERIVED_METRIC. It is queried
+        # like any other metric, so it is one.
+        kind = "METRIC" if d["kind"] == "DERIVED_METRIC" else str(d["kind"])
+        field_type = cast("Literal['metric', 'dimension', 'fact']", kind.lower())
         type_json: dict[str, object] = json.loads(d["data_type"])
         py_type = snowflake_json_type_to_python(type_json)
         data_type = f"TODO: {d['data_type']}" if py_type is None else py_type
@@ -191,9 +308,15 @@ def _introspect_snowflake(cursor: Any, view_name: str) -> IntrospectedView:
             )
         )
 
-    synonyms, view_comment = _describe_annotations(cursor, qualified_name)
+    described = _describe_annotations(cursor, qualified_name)
+    tags = _member_tags(cursor, database, qualified_name, described.members)
     fields = [
-        replace(f, synonyms=synonyms.get(column, ()))
+        replace(
+            f,
+            synonyms=described.synonyms.get(column, ()),
+            label=tags.get(column, {}).get(S_LAYER_LABEL) or None,
+            semantic_format=semantic_format_from_tags(column, tags.get(column, {}), f.field_type),
+        )
         for f, column in zip(fields, column_names, strict=True)
     ]
 
@@ -201,7 +324,7 @@ def _introspect_snowflake(cursor: Any, view_name: str) -> IntrospectedView:
         view_name=view_name,
         class_name=_to_pascal_case(view_name),
         fields=with_python_field_names(fields, column_names),
-        description=view_comment,
+        description=described.view_comment,
     )
 
 
@@ -268,7 +391,9 @@ class SnowflakeEngine(Engine):
         - semolina.engines.sql.SQLBuilder: Query to SQL converter
     """
 
-    introspected_metadata: ClassVar[frozenset[str]] = frozenset({"description", "synonyms"})
+    introspected_metadata: ClassVar[frozenset[str]] = frozenset(
+        {"description", "label", "synonyms", "semantic_format"}
+    )
 
     def introspect(self, view_name: str) -> IntrospectedView:
         """
@@ -298,7 +423,8 @@ class SnowflakeEngine(Engine):
             SemolinaConnectionError: If the connection or authentication fails
                 (wraps an ADBC ``OperationalError`` or ``InterfaceError``).
             SemolinaIntrospectionError: If the warehouse cannot describe the view (wraps
-                any other ADBC :class:`~adbc_driver_manager.Error`).
+                any other ADBC :class:`~adbc_driver_manager.Error`), or refuses the lookup
+                of its member ``S_LAYER`` tags after describing it.
             ValueError: If a quoted part of ``view_name`` contains a ``.`` or leaves a
                 quote unbalanced.
 

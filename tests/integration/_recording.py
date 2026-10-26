@@ -14,6 +14,10 @@ if TYPE_CHECKING:
     from adbc_poolhouse import SnowflakeConfig
 
 
+TAGGED_REVENUE_SPEC = '{"value":{"currency":"USD"}}'
+"""The ``S_LAYER_SPEC`` tag on ``tagged_view``'s revenue, on both warehouses."""
+
+
 def snowflake_query_config(
     base_config: SnowflakeConfig,
     *,

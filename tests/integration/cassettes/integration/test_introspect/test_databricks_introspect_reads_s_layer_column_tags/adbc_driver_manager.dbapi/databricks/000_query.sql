@@ -1,0 +1,1 @@
+DESCRIBE EXTENDED "tagged_view" AS JSON

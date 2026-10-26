@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -80,6 +80,7 @@ def _show_columns_cursor(
     rows: list[tuple[Any, ...]],
     session: tuple[str | None, str | None] = ("SESSION_DB", "SESSION_SCHEMA"),
     describe_rows: list[tuple[Any, ...]] | None = None,
+    tag_rows: list[tuple[str, str, str]] | None = None,
 ) -> MagicMock:
     """
     Build a mock ADBC cursor returning SHOW COLUMNS IN VIEW rows.
@@ -89,7 +90,8 @@ def _show_columns_cursor(
     Snowflake parser consumes. ``.fetchone()`` answers the
     ``SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()`` that qualifies a name given
     with fewer than three parts. A ``DESCRIBE SEMANTIC VIEW`` switches the cursor to
-    that statement's five columns and ``describe_rows`` (none by default).
+    that statement's five columns and ``describe_rows`` (none by default), and the member
+    tags query returns ``tag_rows`` (none by default).
     """
     cursor = MagicMock(name="cursor")
 
@@ -103,6 +105,9 @@ def _show_columns_cursor(
                 ("property_value",),
             ]
             cursor.fetchall.return_value = describe_rows or []
+        elif sql.startswith("SELECT MEMBER"):
+            cursor.description = [("member",), ("tag_name",), ("tag_value",)]
+            cursor.fetchall.return_value = tag_rows or []
         else:
             cursor.description = [("column_name",), ("kind",), ("data_type",), ("comment",)]
             cursor.fetchall.return_value = rows
@@ -285,6 +290,192 @@ class TestSnowflakeEngineIntrospect:
         synonyms = {f.name: f.synonyms for f in view.fields}
         assert synonyms == {"revenue": ("sales", "turnover"), "country": ("nation",), "region": ()}
         assert view.fields[0].description == "Gross"
+
+    _TAGGED_DESCRIBE: ClassVar[list[tuple[Any, ...]]] = [
+        ("TABLE", "SALES_DATA", None, "BASE_TABLE_NAME", "SALES_DATA"),
+        ("METRIC", "REVENUE", "SALES_DATA", "DATA_TYPE", "NUMBER(38,0)"),
+        ("DIMENSION", "COUNTRY", "SALES_DATA", "DATA_TYPE", "VARCHAR"),
+        ("DERIVED_METRIC", "MARGIN", None, "DATA_TYPE", "NUMBER(38,0)"),
+    ]
+    _TAGGED_SHOW: ClassVar[list[tuple[Any, ...]]] = [
+        ("REVENUE", "METRIC", json.dumps({"type": "FIXED", "scale": 0}), ""),
+        ("COUNTRY", "DIMENSION", json.dumps({"type": "TEXT"}), ""),
+        ("MARGIN", "DERIVED_METRIC", json.dumps({"type": "FIXED", "scale": 0}), ""),
+    ]
+
+    def test_introspect_reads_member_tags_into_label_and_semantic_format(self) -> None:
+        """``S_LAYER_KIND`` and ``S_LAYER_SPEC`` make the block; ``S_LAYER_LABEL`` the label."""
+        from s_layer_semantic_formats import from_compact_json
+
+        spec = '{"value":{"currency":"USD"}}'
+        cursor = _show_columns_cursor(
+            self._TAGGED_SHOW,
+            describe_rows=self._TAGGED_DESCRIBE,
+            tag_rows=[
+                ("REVENUE", "S_LAYER_KIND", "currency"),
+                ("REVENUE", "S_LAYER_SPEC", spec),
+                ("REVENUE", "S_LAYER_LABEL", "Revenue"),
+                ("COUNTRY", "S_LAYER_LABEL", "Country"),
+            ],
+        )
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor):
+            view = engine.introspect("sales_view")
+
+        fields = {f.name: f for f in view.fields}
+        assert fields["revenue"].semantic_format == from_compact_json("currency", spec)
+        assert fields["revenue"].label == "Revenue"
+        assert fields["country"].label == "Country"
+        assert fields["country"].semantic_format is None
+        assert fields["margin"].label is None
+
+    def test_introspect_reads_a_derived_metric_as_a_metric(self) -> None:
+        """
+        ``SHOW COLUMNS`` reports a view-level derived metric's kind as ``DERIVED_METRIC``.
+
+        It is queried like any metric, so it is one; a ``derived_metric`` role matches no
+        field class.
+        """
+        cursor = _show_columns_cursor(self._TAGGED_SHOW, describe_rows=self._TAGGED_DESCRIBE)
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor):
+            view = engine.introspect("sales_view")
+
+        assert {f.name: f.field_type for f in view.fields}["margin"] == "metric"
+
+    def test_introspect_reads_a_derived_metrics_tags(self) -> None:
+        cursor = _show_columns_cursor(
+            self._TAGGED_SHOW,
+            describe_rows=self._TAGGED_DESCRIBE,
+            tag_rows=[("MARGIN", "S_LAYER_KIND", "number")],
+        )
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor):
+            view = engine.introspect("sales_view")
+
+        margin = {f.name: f for f in view.fields}["margin"]
+        assert margin.semantic_format is not None
+        assert margin.semantic_format.normal_form()["value"]["kind"] == "number"
+
+    def test_introspect_reads_tags_one_member_at_a_time(self) -> None:
+        """
+        ``TAG_REFERENCES`` takes constants, so the query is one call per member.
+
+        A member names its logical table; a derived metric has none and is named on the
+        view. Only the member's own tags count: ``LEVEL = DOMAIN`` drops the ones it
+        inherits from the view or its table.
+        """
+        cursor = _show_columns_cursor(self._TAGGED_SHOW, describe_rows=self._TAGGED_DESCRIBE)
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor):
+            engine.introspect("sales_view")
+
+        (sql,) = [
+            c[0][0] for c in cursor.execute.call_args_list if c[0][0].startswith("SELECT MEMBER")
+        ]
+        view = '"SESSION_DB"."SESSION_SCHEMA"."SALES_VIEW"'
+        call = (
+            "SELECT '{member}' AS MEMBER, TAG_NAME, TAG_VALUE, LEVEL, DOMAIN"
+            ' FROM TABLE("SESSION_DB".INFORMATION_SCHEMA.TAG_REFERENCES('
+            "'{path}', '{domain}'))"
+        )
+        assert sql == (
+            "SELECT MEMBER, TAG_NAME, TAG_VALUE FROM ("
+            + " UNION ALL ".join(
+                [
+                    call.format(
+                        member="REVENUE",
+                        path=f'{view}!"SALES_DATA"."REVENUE"',
+                        domain="SEMANTIC METRIC",
+                    ),
+                    call.format(
+                        member="COUNTRY",
+                        path=f'{view}!"SALES_DATA"."COUNTRY"',
+                        domain="SEMANTIC DIMENSION",
+                    ),
+                    call.format(member="MARGIN", path=f'{view}!"MARGIN"', domain="SEMANTIC METRIC"),
+                ]
+            )
+            + ") WHERE LEVEL = DOMAIN"
+            " AND TAG_NAME IN ('S_LAYER_KIND', 'S_LAYER_LABEL', 'S_LAYER_SPEC')"
+        )
+
+    def test_introspect_reads_tags_from_a_session_database_with_a_dot_in_its_name(
+        self,
+    ) -> None:
+        """
+        The tag lookup names the session's database as one quoted part, dots and all.
+
+        ``CREATE DATABASE "my.db"`` is a legal name, and ``SHOW COLUMNS`` and ``DESCRIBE``
+        already read its views; the tag query must not cut it at the dot.
+        """
+        cursor = _show_columns_cursor(
+            self._TAGGED_SHOW, session=("my.db", "PUBLIC"), describe_rows=self._TAGGED_DESCRIBE
+        )
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor):
+            engine.introspect("sales_view")
+
+        (sql,) = [
+            c[0][0] for c in cursor.execute.call_args_list if c[0][0].startswith("SELECT MEMBER")
+        ]
+        assert ' FROM TABLE("my.db".INFORMATION_SCHEMA.TAG_REFERENCES(' in sql
+        assert ' FROM TABLE("my.INFORMATION_SCHEMA' not in sql
+
+    def test_introspect_reads_a_facts_tags_in_the_fact_domain(self) -> None:
+        """A fact's tags are looked up in ``SEMANTIC FACT`` and make a fact's block."""
+        cursor = _show_columns_cursor(
+            [("UNITS", "FACT", json.dumps({"type": "FIXED", "scale": 0}), "")],
+            describe_rows=[("FACT", "UNITS", "SALES_DATA", "DATA_TYPE", "NUMBER(38,0)")],
+            tag_rows=[("UNITS", "S_LAYER_KIND", "number")],
+        )
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor):
+            view = engine.introspect("sales_view")
+
+        (sql,) = [
+            c[0][0] for c in cursor.execute.call_args_list if c[0][0].startswith("SELECT MEMBER")
+        ]
+        assert """!"SALES_DATA"."UNITS"', 'SEMANTIC FACT'))""" in sql
+        (units,) = view.fields
+        assert units.field_type == "fact"
+        assert units.semantic_format is not None
+        assert units.semantic_format.normal_form()["value"]["kind"] == "number"
+
+    def test_introspect_escapes_a_quote_in_a_member_name(self) -> None:
+        """A member name is catalogue data inside a string literal, so its quote is doubled."""
+        cursor = _show_columns_cursor(
+            [("it's", "DIMENSION", json.dumps({"type": "TEXT"}), "")],
+            describe_rows=[("DIMENSION", "it's", "T", "DATA_TYPE", "VARCHAR")],
+        )
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor):
+            engine.introspect("sales_view")
+
+        (sql,) = [
+            c[0][0] for c in cursor.execute.call_args_list if c[0][0].startswith("SELECT MEMBER")
+        ]
+        assert "SELECT 'it''s' AS MEMBER" in sql
+        assert '!"T"."it\'\'s"\'' in sql
+
+    def test_introspect_runs_no_tag_query_for_a_view_without_members(self) -> None:
+        cursor = _show_columns_cursor([])
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor):
+            engine.introspect("sales_view")
+
+        assert not [c for c in cursor.execute.call_args_list if c[0][0].startswith("SELECT MEMBER")]
+
+    def test_introspect_refuses_tags_that_make_no_valid_block(self) -> None:
+        """The tags say what the values mean, so an unreadable one is an error."""
+        cursor = _show_columns_cursor(
+            self._TAGGED_SHOW,
+            describe_rows=self._TAGGED_DESCRIBE,
+            tag_rows=[("COUNTRY", "S_LAYER_KIND", "currency")],  # not a dimension kind
+        )
+        engine = _make_snowflake_engine()
+        with _patch_connect(engine, cursor), pytest.raises(ValueError, match="'COUNTRY'"):
+            engine.introspect("sales_view")
 
     def test_introspect_refuses_synonyms_that_are_not_a_json_list(self) -> None:
         """A shape this reader does not know is an error, not a guess."""
@@ -519,6 +710,40 @@ class TestSnowflakeEngineIntrospectErrors:
         engine = _make_snowflake_engine()
         with _patch_connect(engine, cursor), pytest.raises(SemolinaViewNotFoundError):
             engine.introspect("nonexistent_view")
+
+    def test_a_refused_tag_lookup_is_not_reported_as_a_missing_view(self) -> None:
+        """
+        ``SHOW`` and ``DESCRIBE`` found the view, so a refused tag lookup says so.
+
+        A role that can describe the view but not read its tags would otherwise be told the
+        view does not exist.
+        """
+        pytest.importorskip("adbc_driver_manager")
+        from adbc_driver_manager import AdbcStatusCode, ProgrammingError
+
+        from semolina.exceptions import SemolinaIntrospectionError
+
+        cursor = _show_columns_cursor(
+            TestSnowflakeEngineIntrospect._TAGGED_SHOW,
+            describe_rows=TestSnowflakeEngineIntrospect._TAGGED_DESCRIBE,
+        )
+        execute = cursor.execute.side_effect
+
+        def refuse_tags(sql: str) -> None:
+            if sql.startswith("SELECT MEMBER"):
+                raise ProgrammingError(
+                    "Insufficient privileges", status_code=AdbcStatusCode.UNKNOWN
+                )
+            execute(sql)
+
+        cursor.execute.side_effect = refuse_tags
+        engine = _make_snowflake_engine()
+        with (
+            _patch_connect(engine, cursor),
+            pytest.raises(SemolinaIntrospectionError, match="S_LAYER tags") as raised,
+        ):
+            engine.introspect("sales_view")
+        assert "Insufficient privileges" in str(raised.value)
 
     @pytest.mark.parametrize(
         ("error_class", "expected"),

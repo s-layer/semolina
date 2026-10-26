@@ -173,8 +173,8 @@ passes them to ``super().__init__(pool=..., dialect=...)``. Its ``introspect()``
                ],
            )
 
-An ``IntrospectedField`` can also carry ``description``, ``label`` and ``synonyms``,
-which codegen writes as the field's arguments, and an ``IntrospectedView`` a
+An ``IntrospectedField`` can also carry ``description``, ``label``, ``synonyms`` and
+``semantic_format``, which codegen writes as the field's arguments, and an ``IntrospectedView`` a
 ``description`` for the class. ``--check`` compares only the ones your engine lists in
 :py:attr:`~semolina.engines.base.Engine.introspected_metadata`, which is empty by
 default, so declare what your ``introspect()`` fills:
@@ -584,8 +584,9 @@ both sides still read the same annotation:
   wrong ``semantic_view()`` clause.
 - the field's **column** changed. A ``source=`` naming a column the warehouse has since
   renamed makes every query select something that is not there.
-- the field's **metadata** changed. Its ``description=``, ``label=`` or ``synonyms=``
-  no longer match what the warehouse records (see :ref:`howto-models-metadata`).
+- the field's **metadata** changed. Its ``description=``, ``label=``, ``synonyms=`` or
+  ``semantic_format=`` no longer match what the warehouse records (see
+  :ref:`howto-models-metadata`).
 
 Each moves the row to ``drift`` and prints a line under the table naming what moved:
 
@@ -595,8 +596,9 @@ Each moves the row to ``drift`` and prints a line under the table naming what mo
    Detail: country: column: committed 'OLD_NAME', warehouse 'NEW_NAME'
    Detail: revenue: synonyms: committed ('sales',), warehouse ('sales', 'turnover')
 
-Only what the backend records is compared. Snowflake and DuckDB have no label slot, so a
-``label=`` you added there is never drift. Synonyms compare as a set, so their order
+Only what the backend records is compared (see :ref:`howto-models-metadata`). DuckDB
+records no label or format, so a ``label=`` or ``semantic_format=`` you added there is
+never drift. Formats compare by meaning rather than by spelling. Synonyms compare as a set, so their order
 doesn't matter. The model's own ``description=`` is compared with the view's comment, and
 a difference prints as ``Detail: (view): description: ...`` and makes the run exit ``5``
 even when every row matches.

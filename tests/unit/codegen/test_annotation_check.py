@@ -42,10 +42,11 @@ from semolina.engines.base import Engine
 from semolina.engines.sql import DatabricksDialect, DuckDBDialect, SnowflakeDialect, SQLDialect
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Mapping
     from pathlib import Path
 
     import pyarrow
+    from s_layer_semantic_formats import SLayerBlock
 
 pytest.importorskip("adbc_driver_duckdb")
 
@@ -1304,6 +1305,49 @@ class TestMetadataIsComparedToo:
         assert row.status == STATUS_DRIFT
         assert "label" in row.detail
 
+    def test_a_freshly_generated_model_round_trips_its_label_and_format(
+        self, annotated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """
+        A label and a format written by codegen read back as no drift.
+
+        The format goes out as its normal form through the renderer and comes back through
+        the reader's ``literal_eval`` (a nested list stays a list) and ``parse_block``. A
+        mismatch anywhere in that chain would show as drift on every freshly generated
+        model, on every backend that reads formats.
+        """
+        import dataclasses
+
+        from s_layer_semantic_formats import from_compact_json
+
+        engine_type = type(annotated_engine)
+        introspect = engine_type.introspect
+        block = from_compact_json("category", '{"value":{"order":["DE","FR"]}}')
+
+        def tagged(self: Engine, view_name: str) -> IntrospectedView:
+            view = introspect(self, view_name)
+            fields = [
+                dataclasses.replace(f, label="Country", semantic_format=block)
+                if f.name == "country"
+                else f
+                for f in view.fields
+            ]
+            return dataclasses.replace(view, fields=fields)
+
+        monkeypatch.setattr(engine_type, "introspect", tagged)
+        monkeypatch.setattr(
+            engine_type,
+            "introspected_metadata",
+            frozenset({"description", "label", "synonyms", "semantic_format"}),
+        )
+        committed = committed_from_warehouse(annotated_engine, "annotated")
+
+        assert committed.fields["country"].metadata["label"] == "Country"
+        assert "semantic_format" in committed.fields["country"].metadata
+        report = check_view(annotated_engine, "annotated", committed)
+        assert report.has_drift is False, report
+        assert row_named(report, "country").status == STATUS_MATCH
+
     def test_an_engine_that_reads_no_metadata_compares_none(
         self, annotated_engine: Engine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1384,3 +1428,66 @@ class TestMetadataIsComparedToo:
 
         assert len(read.warnings) == 3, read.warnings
         assert report.has_drift is False, report
+
+
+class TestSemanticFormatIsComparedByNormalForm:
+    """``semantic_format=`` against the block the warehouse's tags make."""
+
+    WAREHOUSE_SPEC = '{"value":{"currency":"USD"}}'
+
+    @staticmethod
+    def drift(committed: Mapping[str, object], warehouse: SLayerBlock | None) -> str:
+        from semolina.codegen.annotation_check import _metadata_drift
+
+        field = IntrospectedField("revenue", "metric", "int", semantic_format=warehouse)
+        committed_field = CommittedField(
+            name="revenue",
+            field_class="Metric",
+            annotation="int | None",
+            source_name=None,
+            metadata=committed,
+        )
+        return _metadata_drift(frozenset({"semantic_format"}), field, committed_field)
+
+    def warehouse(self) -> SLayerBlock:
+        from s_layer_semantic_formats import from_compact_json
+
+        return from_compact_json("currency", self.WAREHOUSE_SPEC)
+
+    def test_the_same_block_spelled_without_defaults_matches(self) -> None:
+        committed = {"semantic_format": {"value": {"kind": "currency", "currency": "USD"}}}
+        assert self.drift(committed, self.warehouse()) == ""
+
+    def test_the_normal_form_codegen_writes_matches(self) -> None:
+        from s_layer_semantic_formats import from_compact_json
+
+        normal = from_compact_json("currency", self.WAREHOUSE_SPEC).normal_form()
+        assert self.drift({"semantic_format": normal}, self.warehouse()) == ""
+
+    def test_a_different_block_is_drift(self) -> None:
+        committed = {"semantic_format": {"value": {"kind": "currency", "currency": "EUR"}}}
+        detail = self.drift(committed, self.warehouse())
+        assert detail.startswith("semantic_format: committed ")
+        assert "EUR" in detail and "USD" in detail
+
+    def test_a_missing_format_against_a_tagged_member_is_drift(self) -> None:
+        assert "committed None" in self.drift({}, self.warehouse())
+
+    def test_a_format_on_an_untagged_member_is_drift(self) -> None:
+        committed = {"semantic_format": {"value": {"kind": "count"}}}
+        assert "warehouse None" in self.drift(committed, None)
+
+    def test_neither_side_is_not_drift(self) -> None:
+        assert self.drift({}, None) == ""
+
+    def test_an_invalid_committed_block_is_drift_not_a_crash(self) -> None:
+        committed = {"semantic_format": {"value": {"kind": "bogus"}}}
+        assert "committed is not a valid block" in self.drift(committed, self.warehouse())
+
+    @pytest.mark.parametrize("committed", ["currency", 3, ("currency",)])
+    def test_a_committed_format_that_is_not_a_mapping_is_drift_not_a_crash(
+        self, committed: object
+    ) -> None:
+        """The reader passes on whatever literal it found, not only a dict."""
+        detail = self.drift({"semantic_format": committed}, self.warehouse())
+        assert "committed is not a valid block" in detail
