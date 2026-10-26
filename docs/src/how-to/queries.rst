@@ -218,7 +218,10 @@ have the keys ``revenue`` and ``ordered_at__week``. The backends disagree on wha
 looks like by default, so Semolina makes them agree:
 
 - A grain of ``"day"`` or coarser returns a ``datetime.date``, the first day of the period.
-  A finer grain returns a ``datetime.datetime``.
+  A finer grain returns a ``datetime.datetime`` of the same kind as the field: naive for a
+  timestamp without a time zone, aware for one with. Databricks' ``DATE_TRUNC`` would turn
+  a ``TIMESTAMP_NTZ`` into a ``TIMESTAMP`` in the session time zone, so on Databricks
+  Semolina subtracts the minutes and seconds below the grain instead.
 - Weeks start on Monday everywhere. Snowflake's ``DATE_TRUNC('week', ...)`` follows the
   session's ``WEEK_START`` parameter, so Semolina doesn't use it there.
 

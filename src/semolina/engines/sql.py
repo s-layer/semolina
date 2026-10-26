@@ -943,6 +943,35 @@ class DatabricksDialect(SQLDialect):
         """
         return f"MEASURE({self.quote_identifier(field_name)})"
 
+    def truncate_to_grain(self, column: str, unit: str) -> str:
+        """
+        Truncate to a grain, keeping a sub-day grain's timestamp type.
+
+        Databricks' ``DATE_TRUNC`` returns a ``TIMESTAMP`` even for a ``TIMESTAMP_NTZ``
+        column, which turns a naive value into one in the session time zone. An hour,
+        minute or second grain instead subtracts the part below the grain as an interval,
+        and a timestamp minus an interval keeps the timestamp's type. Day and coarser
+        grains use :meth:`SQLDialect.truncate_to_grain`, since the cast to ``DATE`` drops
+        the time zone anyway.
+
+        Args:
+            column: The quoted column to truncate.
+            unit: One of :data:`semolina.fields.GRAINS`.
+
+        Returns:
+            A SQL expression.
+        """
+        seconds = f"EXTRACT(SECOND FROM {column})"
+        if unit == "hour":
+            interval = f"0, 0, EXTRACT(MINUTE FROM {column}), {seconds}"
+        elif unit == "minute":
+            interval = f"0, 0, 0, {seconds}"
+        elif unit == "second":
+            interval = f"0, 0, 0, MOD({seconds}, 1)"
+        else:
+            return super().truncate_to_grain(column, unit)
+        return f"({column} - MAKE_DT_INTERVAL({interval}))"
+
     def normalize_identifier(self, name: str) -> str:
         """
         Fold Python field name to Databricks SQL column name.
