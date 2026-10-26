@@ -77,9 +77,11 @@ Treat a decimal metric as arriving as a ``Decimal`` on every backend, then:
 production.
 
 What makes it *look* DuckDB-specific is the sample data. The database the tutorial builds
-declares ``revenue`` as an ``INTEGER``, so nothing computed over it is ever a
-``Decimal``, and serialization code written against those examples has never met the
-type it will meet against your warehouse. The forgiving thing is the fixture, not the
+declares ``revenue`` as an ``INTEGER`` and casts its sums to ``BIGINT``, so nothing
+computed over it is ever a ``Decimal``, and serialization code written against those
+examples has never met the type it will meet against your warehouse. Drop the cast and
+DuckDB's own ``SUM`` over that column is a ``HUGEINT``, which arrives as a ``Decimal``
+too. The forgiving thing is the fixture, not the
 engine.
 
 So switching to Snowflake will not introduce this bug and staying on DuckDB will not

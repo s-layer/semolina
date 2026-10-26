@@ -688,8 +688,8 @@ def probe_sql_for(field_name: str) -> tuple[str, list[Any]]:
     Build the probe SQL for one metric through Semolina's own DuckDB builder.
 
     Built rather than pasted so the probe measures the statement a user's query produces.
-    Probing through ``semantic_view(...)`` matters: a hand-written ``SELECT SUM(...)`` over
-    the base table reports types the extension casts away before users ever see them.
+    Probing through ``semantic_view(...)`` matters: the extension, not a hand-written
+    ``SELECT SUM(...)`` over the base table, decides the types users actually see.
 
     This is the *minimal* query for a single metric, quoted in the artifact's named
     disagreements. :func:`probe_sql_all` is what the comparison table is measured through.

@@ -217,11 +217,12 @@ query itself.
    By default ``.into()`` holds you to the type the column arrives as,
    and refuses the call with
    :py:exc:`~semolina.exceptions.SemolinaSchemaMismatchError` when an annotation
-   disagrees. ``sales_data.revenue`` is an ``INTEGER`` here, so summing it gives
-   an ``int``. Databricks agrees: ``SUM`` over an integer column is a ``BIGINT``,
-   which arrives as an ``int``. Snowflake types the same sum ``NUMBER(38,0)``, which
-   arrives as a ``Decimal``, and a metric over a ``DECIMAL`` column, which is how
-   money is usually stored, is a ``Decimal`` on every backend.
+   disagrees. The tutorial's view casts its sums to ``BIGINT``, so ``revenue``
+   arrives as an ``int``. Without the cast DuckDB types a ``SUM`` over an
+   ``INTEGER`` column as ``HUGEINT``, which arrives as a ``Decimal``. Databricks
+   types the same sum ``BIGINT``, an ``int``, and Snowflake types it
+   ``NUMBER(38,0)``, a ``Decimal``. A metric over a ``DECIMAL`` column, which is
+   how money is usually stored, is a ``Decimal`` on every backend.
    :ref:`howto-typed-results` covers the check and the ``validate=``
    escape hatch; :ref:`explanation-type-fidelity` covers why the warehouse gets
    to decide.

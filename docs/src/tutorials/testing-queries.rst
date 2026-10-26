@@ -163,8 +163,8 @@ Create ``conftest.py``:
                s.region AS region
            )
            METRICS (
-               s.revenue AS SUM(s.revenue),
-               s.cost AS SUM(s.cost)
+               s.revenue AS CAST(SUM(s.revenue) AS BIGINT),
+               s.cost AS CAST(SUM(s.cost) AS BIGINT)
            )
        """)
        cur.close()

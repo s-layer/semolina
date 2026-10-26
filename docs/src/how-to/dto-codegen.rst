@@ -506,11 +506,12 @@ the same names. What can differ is the type each one arrives as:
 
       .. code-block:: python
 
-         revenue: int | None
+         revenue: decimal.Decimal | None
          country: str
 
-      DuckDB keeps a ``SUM`` over an integer column an integer too. Over a ``DECIMAL``
-      column it would be ``decimal.Decimal | None`` here as well.
+      DuckDB types a ``SUM`` over an integer column ``HUGEINT``, a 128-bit integer that
+      arrives as a ``Decimal``. A view that casts the sum to ``BIGINT`` gives
+      ``int | None`` here instead.
 
 Aggregation result typing is the warehouse's own decision: a ``SUM`` over an integer column
 comes back as a ``BIGINT`` from one warehouse and a ``DECIMAL`` from another. Codegen prints

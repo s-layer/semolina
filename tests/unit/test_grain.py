@@ -3,8 +3,7 @@ Tests for :meth:`Dimension.grain`: truncating a date or timestamp dimension at q
 
 The SQL each dialect writes is pinned exactly here; the values it returns are checked
 against a calendar oracle by the warehouse tests in ``tests/integration/test_queries.py``
-(Snowflake and Databricks) and by :class:`TestDuckDBExecution` once the installed
-``semantic_views`` extension supports expression dimensions.
+(Snowflake and Databricks) and by :class:`TestDuckDBExecution` (DuckDB).
 """
 
 from __future__ import annotations
@@ -373,6 +372,7 @@ class TestDuckDBExecution:
     @pytest.fixture
     def orders_engine(self) -> Any:
         """An in-memory engine holding ``orders_data`` and ``orders_view``."""
+        pytest.importorskip("adbc_driver_duckdb")
         from adbc_poolhouse import DuckDBConfig, close_pool
         from sqlalchemy import event
 
