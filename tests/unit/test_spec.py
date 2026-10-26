@@ -393,6 +393,27 @@ class TestBuildQuery:
             Sales.country
         )
 
+    def test_null_order_keys_mean_absent(self):
+        """``direction: null`` and ``nulls: null`` take the defaults, as strict tool modes send."""
+        query = build_query(
+            Sales,
+            {
+                "metrics": ["revenue"],
+                "order_by": [{"field": "revenue", "direction": None, "nulls": None}],
+            },
+        )
+        assert query == Sales.query().metrics(Sales.revenue).order_by(Sales.revenue)
+
+    def test_null_isnull_value_means_is_null(self):
+        """``"value": null`` on ``isnull`` is the default, ``true``."""
+        built = predicate_from_spec(Sales, {"field": "country", "op": "isnull", "value": None})
+        assert built == Sales.country.isnull()
+
+    def test_whole_number_float_limit_is_an_int(self):
+        """JSON has one number type, and some callers send ``10.0``; the schema allows it."""
+        query = build_query(Sales, {"metrics": ["revenue"], "limit": 10.0})
+        assert query == Sales.query().metrics(Sales.revenue).limit(10)
+
 
 class TestBuildQueryErrors:
     """Each mistake in the data raises with the path to it."""
@@ -612,6 +633,93 @@ class TestFilterTrees:
         assert info.value.path == path
         assert message in str(info.value)
 
+    @pytest.mark.parametrize(
+        ("spec", "path"),
+        [
+            (
+                {
+                    "or": [
+                        {"field": "country", "op": "eq", "value": "US"},
+                        {"field": "revenue", "op": "gt", "value": 1000},
+                    ]
+                },
+                "where.or",
+            ),
+            (
+                {
+                    "not": {
+                        "and": [
+                            {"field": "country", "op": "eq", "value": "US"},
+                            {"field": "revenue", "op": "gt", "value": 1000},
+                        ]
+                    }
+                },
+                "where.not",
+            ),
+            (
+                [
+                    {"field": "region", "op": "eq", "value": "West"},
+                    {
+                        "and": [
+                            {"field": "cost", "op": "lt", "value": 5},
+                            {
+                                "or": [
+                                    {"field": "unit_price", "op": "gt", "value": 1},
+                                    {"field": "revenue", "op": "gt", "value": 1000},
+                                ]
+                            },
+                        ]
+                    },
+                ],
+                "where[1].and[1].or",
+            ),
+        ],
+    )
+    def test_dimension_and_metric_under_or_or_not_is_refused(self, spec: Any, path: str):
+        """
+        No SQL clause can hold the mix, so it is refused before any SQL is written.
+
+        The SQL builder would raise a plain ``ValueError`` at execute time, which a tool
+        that catches ``SemolinaSpecError`` would not hand back to the model.
+        """
+        with pytest.raises(SemolinaSpecError) as info:
+            build_query(Sales, {"metrics": ["revenue"], "where": spec})
+        assert info.value.path == path
+        assert "'revenue'" in str(info.value)
+        assert "only be joined with AND" in str(info.value)
+
+    def test_dimension_and_metric_joined_by_and_still_build_and_run(self, duckdb_pool: Any):
+        """At the top of the filter, AND splits the two into WHERE and HAVING as usual."""
+        query = build_query(
+            Sales,
+            {
+                "metrics": ["revenue"],
+                "dimensions": ["country"],
+                "where": {
+                    "and": [
+                        {"field": "region", "op": "eq", "value": "West"},
+                        {"not": {"field": "revenue", "op": "lt", "value": 1500}},
+                    ]
+                },
+            },
+        )
+        assert query.to_sql("duckdb")
+        with query.execute() as cursor:
+            assert [(row.country, row.revenue) for row in cursor.fetchall_rows()] == [("CA", 2000)]
+
+    def test_metrics_alone_may_mix_under_or(self):
+        """An OR over metrics only is a HAVING clause, and builds."""
+        built = predicate_from_spec(
+            Sales,
+            {
+                "or": [
+                    {"field": "revenue", "op": "gt", "value": 1},
+                    {"not": {"field": "cost", "op": "lt", "value": 5}},
+                ]
+            },
+        )
+        assert built == (Sales.revenue > 1) | ~(Sales.cost < 5)
+
 
 class TestDateValues:
     """An ISO string becomes the date or time type its field declares."""
@@ -669,6 +777,20 @@ class TestDateValues:
         built = predicate_from_spec(Orders, {"field": field, "op": "eq", "value": "2024-01-31"})
         assert isinstance(built, Lookup)
         assert built.value == "2024-01-31"
+
+    def test_optional_declared_type_is_converted(self):
+        """``Metric[datetime.date | None]``, as codegen writes every metric, converts too."""
+
+        class Latest(SemanticView, view="latest"):
+            last_order = Metric[datetime.date | None]()
+
+        built = predicate_from_spec(
+            Latest, {"field": "last_order", "op": "gt", "value": "2024-02-01"}
+        )
+        assert built == (Latest.last_order > datetime.date(2024, 2, 1))
+        with pytest.raises(SemolinaSpecError) as info:
+            predicate_from_spec(Latest, {"field": "last_order", "op": "gt", "value": "2024-02-30"})
+        assert "is not an ISO date for 'last_order'" in str(info.value)
 
     def test_non_string_value_is_left_alone(self):
         """A date object from Python code passes through."""
@@ -779,17 +901,23 @@ class TestSchema:
         """
         For generated query data, valid and invalid, the schema accepts it when it builds.
 
-        Two refusals are allowed through: an ``order_by`` on an unselected dimension and a
-        date string the field's type cannot parse, which its docstring names as what JSON
-        Schema cannot say. The builder's message for each is checked, so that no other
-        refusal hides behind them.
+        Three refusals are allowed through: an ``order_by`` on an unselected dimension, a
+        date string the field's type cannot parse, and a dimension combined with a metric
+        under ``or`` or ``not``, which its docstring names as what JSON Schema cannot say.
+        The builder's message for each is checked, so that no other refusal hides behind
+        them.
         """
         schema_ok = Draft202012Validator(query_spec_schema(Orders)).is_valid(spec)
         try:
             build_query(Orders, spec)
         except SemolinaSpecError as error:
-            documented = "needs it in 'dimensions' too" in str(error) or "is not an ISO" in str(
-                error
+            documented = any(
+                marker in str(error)
+                for marker in (
+                    "needs it in 'dimensions' too",
+                    "is not an ISO",
+                    "can only be joined with AND",
+                )
             )
             assert not schema_ok or documented, (spec, str(error))
         else:
@@ -828,6 +956,7 @@ class TestSchema:
                     [{"field": "region", "op": "eq", "value": "x"}],
                     {"and": []},
                     {"or": [{"field": "region", "op": "isnull"}]},
+                    {"field": "region", "op": "isnull", "value": None},
                     {"not": {"field": "region", "op": "isnull"}},
                     {"not": []},
                     {"and": [], "or": []},
@@ -845,6 +974,7 @@ class TestSchema:
                     ["+revenue"],
                     ["region"],
                     [{"field": "revenue", "direction": "desc", "nulls": "last"}],
+                    [{"field": "revenue", "direction": None, "nulls": None}],
                     [{"field": "revenue", "direction": "down"}],
                     [{"field": "revenue", "extra": 1}],
                     [{"direction": "asc"}],
@@ -852,7 +982,7 @@ class TestSchema:
                     "revenue",
                 ],
             ),
-            ("limit", [None, 1, 5, 0, -1, True, False, 1.5, "5", [1]]),
+            ("limit", [None, 1, 5, 10.0, 0, 0.0, -1, True, False, 1.5, "5", [1]]),
             ("bogus", [None, 1]),
         ],
     )

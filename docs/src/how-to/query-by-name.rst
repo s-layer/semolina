@@ -96,32 +96,48 @@ filters. Pass ``where`` a list and every filter in it must hold.
 .. code-block:: python
 
    {
-       "where": {
-           "or": [
-               {"field": "country", "op": "eq", "value": "US"},
-               {
-                   "and": [
-                       {
-                           "field": "region",
-                           "op": "eq",
-                           "value": "West",
-                       },
-                       {
-                           "not": {
-                               "field": "revenue",
-                               "op": "lt",
-                               "value": 1000,
-                           }
-                       },
-                   ]
-               },
-           ]
-       }
+       "where": [
+           {
+               "or": [
+                   {
+                       "field": "country",
+                       "op": "eq",
+                       "value": "US",
+                   },
+                   {
+                       "and": [
+                           {
+                               "field": "region",
+                               "op": "eq",
+                               "value": "West",
+                           },
+                           {
+                               "not": {
+                                   "field": "country",
+                                   "op": "in",
+                                   "value": ["CA", "MX"],
+                               }
+                           },
+                       ]
+                   },
+               ]
+           },
+           {
+               "not": {
+                   "field": "revenue",
+                   "op": "lt",
+                   "value": 1000,
+               }
+           },
+       ]
    }
 
 Each ``op`` calls the field method of the same meaning, so the filtering rules in
 :ref:`howto-filtering` apply unchanged. Filters on metrics still go to ``HAVING``, for
-example.
+example, which is why the ``revenue`` condition above sits at the top of ``where``. A
+dimension filter applies before aggregation and a metric filter after it, so the two can
+only be joined by the list or a top-level ``and``. Combining them under ``or`` or ``not``
+raises ``SemolinaSpecError``.
 
 .. list-table::
    :header-rows: 1
@@ -211,9 +227,10 @@ each filter ``op`` is tied to the ``value`` shape it takes. Use it as a tool's i
        with query.execute() as cursor:
            return [dict(row) for row in cursor.fetchall_rows()]
 
-Data the schema accepts builds, with two exceptions that JSON Schema can't express. One is
-ordering by a dimension the query doesn't select, and the other is a date string that
-doesn't parse. Both still raise ``SemolinaSpecError``, so catch it in the tool either way.
+Data the schema accepts builds, with three exceptions that JSON Schema can't express:
+ordering by a dimension the query doesn't select, a date string that doesn't parse, and a
+dimension and a metric combined under ``or`` or ``not``. All three still raise
+``SemolinaSpecError``, so catch it in the tool either way.
 
 To look up a single field, use :py:func:`~semolina.spec.field_by_name`. It returns the same
 descriptor as attribute access, so ``field_by_name(Sales, "revenue") is Sales.revenue``.

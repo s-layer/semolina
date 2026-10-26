@@ -35,8 +35,19 @@ from __future__ import annotations
 import datetime
 import decimal
 import difflib
+import types
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypeAlias, TypedDict, get_args
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    NotRequired,
+    TypeAlias,
+    TypedDict,
+    Union,
+    get_args,
+    get_origin,
+)
 
 from .exceptions import SemolinaSpecError
 from .fields import Dimension, Fact, Field, Metric, NullsOrdering, OrderTerm
@@ -286,12 +297,21 @@ def _field_value_type(field: Field[Any]) -> object:
     Args:
         field: A model field.
 
+    An optional type, as in ``Metric[datetime.date | None]()``, gives the type it wraps.
+
     Returns:
         The type argument, or ``None`` for a field declared without one.
     """
     orig = getattr(field, "__orig_class__", None)
     args = get_args(orig) if orig is not None else ()
-    return args[0] if args else None
+    if not args:
+        return None
+    declared = args[0]
+    if get_origin(declared) in (Union, types.UnionType):
+        members = [arg for arg in get_args(declared) if arg is not type(None)]
+        if len(members) == 1:
+            return members[0]
+    return declared
 
 
 def _coerce_scalar(field: Field[Any], value: Any, path: str) -> Any:
@@ -379,7 +399,9 @@ def _leaf_value(field: Field[Any], op: str, spec: Mapping[str, Any], path: str) 
     """
     vpath = f"{path}.value"
     if op == "isnull":
-        value = spec.get("value", True)
+        value = spec.get("value")
+        if value is None:
+            return True
         if not isinstance(value, bool):
             raise SemolinaSpecError(
                 f"'isnull' takes true or false, got {type(value).__name__}: {value!r}", vpath
@@ -447,7 +469,8 @@ def predicate_from_spec(model: type[SemanticView], spec: Any, *, path: str = "wh
 
     Raises:
         SemolinaSpecError: If the data names an unknown field or operator, gives a value of
-            the wrong shape, has keys a filter does not take, or is an empty ``and`` / ``or``.
+            the wrong shape, has keys a filter does not take, is an empty ``and`` / ``or``,
+            or combines a dimension or fact with a metric under ``or`` or ``not``.
         TypeError: If ``model`` is not a ``SemanticView`` subclass.
 
     Example:
@@ -458,13 +481,32 @@ def predicate_from_spec(model: type[SemanticView], spec: Any, *, path: str = "wh
                 {
                     "or": [
                         {"field": "country", "op": "eq", "value": "US"},
-                        {"field": "revenue", "op": "gt", "value": 1000},
+                        {"field": "region", "op": "eq", "value": "West"},
                     ]
                 },
             )
-            # == (Sales.country == "US") | (Sales.revenue > 1000)
+            # == (Sales.country == "US") | (Sales.region == "West")
     """
     _model_fields(model)
+    return _build(model, spec, path)[0]
+
+
+def _build(model: type[SemanticView], spec: Any, path: str) -> tuple[Predicate, dict[str, bool]]:
+    """
+    Build a filter predicate, and say which fields it reads and whether each is a metric.
+
+    Args:
+        model: The model the fields belong to.
+        spec: The filter data.
+        path: Where the filter sits.
+
+    Returns:
+        The predicate, and a map from each field name it reads to whether that field is a
+        metric.
+
+    Raises:
+        SemolinaSpecError: As :func:`predicate_from_spec` documents.
+    """
     if isinstance(spec, list | tuple):
         return _combine(model, spec, path, "and")
     if not isinstance(spec, Mapping):
@@ -479,14 +521,49 @@ def predicate_from_spec(model: type[SemanticView], spec: Any, *, path: str = "wh
                     f"{key!r} takes a list of filters, got {type(children).__name__}",
                     f"{path}.{key}",
                 )
-            return _combine(model, children, f"{path}.{key}", key)
+            built, fields = _combine(model, children, f"{path}.{key}", key)
+            if key == "or":
+                _refuse_mixed(fields, f"{path}.or")
+            return built, fields
     if "not" in node:
         _single_key(node, "not", path)
-        return Not(predicate_from_spec(model, node["not"], path=f"{path}.not"))
-    return _leaf(model, node, path)
+        child, fields = _build(model, node["not"], f"{path}.not")
+        _refuse_mixed(fields, f"{path}.not")
+        return Not(child), fields
+    predicate, field = _leaf(model, node, path)
+    return predicate, {str(node["field"]): isinstance(field, Metric)}
 
 
-def _combine(model: type[SemanticView], children: Sequence[Any], path: str, key: str) -> Predicate:
+def _refuse_mixed(fields: Mapping[str, bool], path: str) -> None:
+    """
+    Refuse a dimension or fact and a metric combined under ``or`` or ``not``.
+
+    A dimension or fact filter applies before aggregation and a metric filter after it, so
+    no single SQL clause can hold the combination. The SQL builder refuses it too, but only
+    when the query runs, and with a plain ``ValueError``.
+
+    Args:
+        fields: The fields the filter reads, each mapped to whether it is a metric.
+        path: Where the ``or`` or ``not`` sits.
+
+    Raises:
+        SemolinaSpecError: If ``fields`` holds both kinds.
+    """
+    metrics = [name for name, is_metric in fields.items() if is_metric]
+    others = [name for name, is_metric in fields.items() if not is_metric]
+    if metrics and others:
+        raise SemolinaSpecError(
+            f"this filter combines {_quoted_list(others)} with the metric "
+            f"{_quoted_list(metrics)}. A dimension or fact filter applies before aggregation "
+            f"and a metric filter after it, so the two can only be joined with AND at the top "
+            f"of 'where'. Move the metric condition out to its own top-level filter.",
+            path,
+        )
+
+
+def _combine(
+    model: type[SemanticView], children: Sequence[Any], path: str, key: str
+) -> tuple[Predicate, dict[str, bool]]:
     """
     Build each child filter and join them with AND or OR.
 
@@ -497,23 +574,24 @@ def _combine(model: type[SemanticView], children: Sequence[Any], path: str, key:
         key: ``"and"`` or ``"or"``.
 
     Returns:
-        The joined predicate.
+        The joined predicate, and the fields it reads, as :func:`_build` returns them.
 
     Raises:
         SemolinaSpecError: If the list is empty, or a child is invalid.
     """
     if not children:
         raise SemolinaSpecError(f"{key!r} needs at least one filter", path)
-    built = [
-        predicate_from_spec(model, child, path=f"{path}[{i}]") for i, child in enumerate(children)
-    ]
-    combined = built[0]
-    for predicate in built[1:]:
+    built = [_build(model, child, f"{path}[{i}]") for i, child in enumerate(children)]
+    combined, fields = built[0][0], dict(built[0][1])
+    for predicate, child_fields in built[1:]:
         combined = combined & predicate if key == "and" else combined | predicate
-    return combined
+        fields.update(child_fields)
+    return combined, fields
 
 
-def _leaf(model: type[SemanticView], spec: Mapping[str, Any], path: str) -> Predicate:
+def _leaf(
+    model: type[SemanticView], spec: Mapping[str, Any], path: str
+) -> tuple[Predicate, Field[Any]]:
     """
     Build one comparison from a :class:`FilterLeaf`.
 
@@ -523,7 +601,7 @@ def _leaf(model: type[SemanticView], spec: Mapping[str, Any], path: str) -> Pred
         path: Where it sits.
 
     Returns:
-        The comparison predicate.
+        The comparison predicate, and the field it compares.
 
     Raises:
         SemolinaSpecError: If a key is missing or unknown, the field or operator is unknown,
@@ -548,7 +626,7 @@ def _leaf(model: type[SemanticView], spec: Mapping[str, Any], path: str) -> Pred
             f"unknown op {op!r}.{hint} The ops are {_quoted_list(_OPS)}.", f"{path}.op"
         )
     value = _leaf_value(field, op, spec, path)
-    return _LEAF_BUILDERS[op](field, value)
+    return _LEAF_BUILDERS[op](field, value), field
 
 
 def _names(spec: Mapping[str, Any], key: str) -> list[str]:
@@ -646,7 +724,7 @@ def _order_term(
         if "field" not in obj:
             raise SemolinaSpecError("an order_by object needs 'field'", path)
         field = field_by_name(model, obj["field"], path=f"{path}.field")
-        direction = obj.get("direction", "asc")
+        direction = obj.get("direction") or "asc"
         if direction not in ("asc", "desc"):
             raise SemolinaSpecError(
                 f"direction is 'asc' or 'desc', got {direction!r}", f"{path}.direction"
@@ -759,6 +837,8 @@ def build_query(
 
     limit = spec.get("limit")
     if limit is not None:
+        if isinstance(limit, float) and limit.is_integer():
+            limit = int(limit)
         if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
             raise SemolinaSpecError(f"'limit' is a positive integer, got {limit!r}", "limit")
         query = query.limit(limit)
@@ -779,9 +859,10 @@ def query_spec_schema(model: type[SemanticView]) -> dict[str, Any]:
     tool's input schema and the model can only name fields that exist.
 
     Data the schema accepts builds without a
-    :class:`~semolina.exceptions.SemolinaSpecError`, with two exceptions the schema cannot
-    express: an ``order_by`` on a dimension the query does not select, and a date string
-    the field's declared type cannot parse.
+    :class:`~semolina.exceptions.SemolinaSpecError`, with three exceptions the schema cannot
+    express: an ``order_by`` on a dimension the query does not select, a date string the
+    field's declared type cannot parse, and a dimension or fact combined with a metric
+    under ``or`` or ``not``.
 
     Args:
         model: The :class:`~semolina.models.SemanticView` subclass.
@@ -844,7 +925,7 @@ def query_spec_schema(model: type[SemanticView]) -> dict[str, Any]:
                 ["between"],
                 {"type": "array", "items": _SCALAR_SCHEMA, "minItems": 2, "maxItems": 2},
             ),
-            _leaf_schema(field_enum, ["isnull"], {"type": "boolean"}, required=False),
+            _leaf_schema(field_enum, ["isnull"], {"type": ["boolean", "null"]}, required=False),
             _leaf_schema(field_enum, sorted(_STRING_OPS), {"type": "string"}),
         ]
         defs["filter"] = {
@@ -864,8 +945,8 @@ def query_spec_schema(model: type[SemanticView]) -> dict[str, Any]:
             "type": "object",
             "properties": {
                 "field": field_enum,
-                "direction": {"enum": ["asc", "desc"]},
-                "nulls": {"enum": ["first", "last"]},
+                "direction": {"enum": ["asc", "desc", None]},
+                "nulls": {"enum": ["first", "last", None]},
             },
             "required": ["field"],
             "additionalProperties": False,
