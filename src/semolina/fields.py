@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime
 import keyword
+import types
 from dataclasses import dataclass
 from enum import Enum
 from typing import (
@@ -19,11 +20,14 @@ from typing import (
     Self,
     TypeAlias,
     TypeVar,
+    Union,
     get_args,
+    get_origin,
     overload,
 )
 
 __all__ = [
+    "DATE_GRAINS",
     "GRAINS",
     "RESERVED_FIELD_NAMES",
     "Grain",
@@ -34,6 +38,7 @@ __all__ = [
     "Dimension",
     "Fact",
     "OrderTerm",
+    "declared_type",
 ]
 
 
@@ -68,7 +73,7 @@ Grain: TypeAlias = Literal["year", "quarter", "month", "week", "day", "hour", "m
 GRAINS: tuple[Grain, ...] = get_args(Grain)
 """Every :data:`Grain`, coarsest first."""
 
-_DATE_GRAINS = frozenset(GRAINS[: GRAINS.index("day") + 1])
+DATE_GRAINS = frozenset(GRAINS[: GRAINS.index("day") + 1])
 """The grains a ``DATE`` can be truncated to, and those whose result is a ``DATE``."""
 
 if TYPE_CHECKING:
@@ -864,8 +869,8 @@ class Dimension(Field[T]):
         if cached is not None:
             return cached
         name = _check_name(self.name)
-        declared = _declared_type(self)
-        if declared is datetime.date and unit not in _DATE_GRAINS:
+        declared = declared_type(self)
+        if declared is datetime.date and unit not in DATE_GRAINS:
             raise ValueError(
                 f"{name!r} is a date, so it has no {unit!r} grain. The finest is 'day'."
             )
@@ -885,9 +890,12 @@ class Dimension(Field[T]):
         return grained
 
 
-def _declared_type(field: Field[Any]) -> object:
+def declared_type(field: Field[Any]) -> object:
     """
     Return the type a field was declared with, as in ``Dimension[datetime.date]()``.
+
+    An optional type, as in ``Dimension[datetime.date | None]()``, gives the type it
+    wraps: the column is nullable, and its values are still dates.
 
     Args:
         field: A field.
@@ -897,7 +905,14 @@ def _declared_type(field: Field[Any]) -> object:
     """
     orig = getattr(field, "__orig_class__", None)
     args = get_args(orig) if orig is not None else ()
-    return args[0] if args else None
+    if not args:
+        return None
+    declared = args[0]
+    if get_origin(declared) in (Union, types.UnionType):
+        members = [arg for arg in get_args(declared) if arg is not type(None)]
+        if len(members) == 1:
+            return members[0]
+    return declared
 
 
 class GrainedDimension(Dimension[Any]):
@@ -931,7 +946,7 @@ class GrainedDimension(Dimension[Any]):
     @property
     def result_is_date(self) -> bool:
         """Whether the truncated value is a ``DATE`` (a day or coarser) or a ``TIMESTAMP``."""
-        return self.unit in _DATE_GRAINS
+        return self.unit in DATE_GRAINS
 
     def __repr__(self) -> str:
         """Show the base field and the grain, as the call that made it reads."""

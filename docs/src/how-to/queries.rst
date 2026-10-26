@@ -240,7 +240,9 @@ the grain itself raises ``TypeError``:
 Semolina reads the field's declared type to check the grain. A ``Dimension[datetime.date]``
 has no grain finer than a day, so ``Orders.ordered_on.grain("hour")`` raises
 ``ValueError``. Calling ``.grain()`` on a field declared with any type other than ``date``
-or ``datetime`` raises ``TypeError``. An undeclared ``Dimension()`` takes every grain.
+or ``datetime`` raises ``TypeError``. An optional declaration such as
+``Dimension[datetime.date | None]`` counts as the type it wraps. An undeclared
+``Dimension()`` takes every grain.
 
 Use query shorthand
 -------------------

@@ -35,7 +35,6 @@ from __future__ import annotations
 import datetime
 import decimal
 import difflib
-import types
 from collections.abc import Callable, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
@@ -44,13 +43,12 @@ from typing import (
     NotRequired,
     TypeAlias,
     TypedDict,
-    Union,
     get_args,
-    get_origin,
 )
 
 from .exceptions import SemolinaSpecError
 from .fields import (
+    DATE_GRAINS,
     GRAINS,
     Dimension,
     Fact,
@@ -59,6 +57,7 @@ from .fields import (
     Metric,
     NullsOrdering,
     OrderTerm,
+    declared_type,
 )
 from .filters import (
     IsNull,
@@ -313,11 +312,16 @@ def _grain_names(fields: Mapping[str, Field[Any]]) -> list[str]:
     for name, field in fields.items():
         if not isinstance(field, Dimension):
             continue
-        declared = _field_value_type(field)
+        declared = declared_type(field)
         if declared is datetime.datetime:
-            names.extend(f"{name}__{unit}" for unit in GRAINS)
+            units: Sequence[str] = GRAINS
         elif declared is datetime.date:
-            names.extend(f"{name}__{unit}" for unit in GRAINS[: GRAINS.index("day") + 1])
+            units = [unit for unit in GRAINS if unit in DATE_GRAINS]
+        else:
+            continue
+        # A declared field with the grain's name wins (``field_by_name`` returns it), and
+        # listing the name twice would make the schema's enums repeat a value.
+        names.extend(f"{name}__{unit}" for unit in units if f"{name}__{unit}" not in fields)
     return names
 
 
@@ -354,30 +358,6 @@ def _quoted_list(names: Sequence[str] | Mapping[str, Any]) -> str:
     return ", ".join(repr(n) for n in names)
 
 
-def _field_value_type(field: Field[Any]) -> object:
-    """
-    Return the Python type a field was declared with, as in ``Dimension[datetime.date]()``.
-
-    Args:
-        field: A model field.
-
-    An optional type, as in ``Metric[datetime.date | None]()``, gives the type it wraps.
-
-    Returns:
-        The type argument, or ``None`` for a field declared without one.
-    """
-    orig = getattr(field, "__orig_class__", None)
-    args = get_args(orig) if orig is not None else ()
-    if not args:
-        return None
-    declared = args[0]
-    if get_origin(declared) in (Union, types.UnionType):
-        members = [arg for arg in get_args(declared) if arg is not type(None)]
-        if len(members) == 1:
-            return members[0]
-    return declared
-
-
 def _coerce_scalar(field: Field[Any], value: Any, path: str) -> Any:
     """
     Convert an ISO-format string to the date or time type its field was declared with.
@@ -401,7 +381,7 @@ def _coerce_scalar(field: Field[Any], value: Any, path: str) -> Any:
     """
     if not isinstance(value, str):
         return value
-    parse = _ISO_PARSERS.get(_field_value_type(field))
+    parse = _ISO_PARSERS.get(declared_type(field))
     if parse is None:
         return value
     try:

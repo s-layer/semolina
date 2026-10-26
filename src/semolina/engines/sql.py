@@ -18,6 +18,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from semolina import dialect as _dialect
+from semolina.fields import DATE_GRAINS
 from semolina.filters import (
     And,
     Between,
@@ -61,10 +62,6 @@ __all__ = [
     "SQLBuilder",
     "DuckDBSQLBuilder",
 ]
-
-
-_DATE_GRAINS = frozenset({"year", "quarter", "month", "week", "day"})
-"""The grains whose truncation :meth:`SQLDialect.truncate_to_grain` casts to ``DATE``."""
 
 
 def sql_str_literal(value: str) -> str:
@@ -538,7 +535,7 @@ class SQLDialect(ABC):
             A SQL expression.
         """
         truncated = f"DATE_TRUNC('{unit}', {column})"
-        if unit in _DATE_GRAINS:
+        if unit in DATE_GRAINS:
             return f"CAST({truncated} AS DATE)"
         return truncated
 
