@@ -136,6 +136,114 @@ you build the query:
    Sales.query().metrics(Sales.revenue).metrics(Sales.revenue)
    # ValueError: 'revenue' is selected twice. ...
 
+.. _howto-time-grain:
+
+Group by a time grain
+---------------------
+
+A date or timestamp dimension groups by its exact value. To roll it up to weeks, months or
+any coarser period, select ``.grain()`` of it instead. Its argument is ``"year"``,
+``"quarter"``, ``"month"``, ``"week"``, ``"day"``, ``"hour"``, ``"minute"`` or
+``"second"``:
+
+.. code-block:: python
+
+   import datetime
+
+   from semolina import SemanticView, Metric, Dimension
+
+
+   class Orders(SemanticView, view="orders"):
+       revenue = Metric[int]()
+       ordered_at = Dimension[datetime.datetime]()
+       ordered_on = Dimension[datetime.date]()
+
+
+   week = Orders.ordered_at.grain("week")
+   query = (
+       Orders.query()
+       .metrics(Orders.revenue)
+       .dimensions(week)
+       .where(Orders.ordered_at >= datetime.date(2024, 1, 1))
+       .order_by(week)
+   )
+
+.. tab-set::
+   :sync-group: warehouse
+
+   .. tab-item:: Snowflake
+      :sync: snowflake
+
+      .. code-block:: sql
+
+         SELECT AGG("REVENUE") AS "revenue",
+                DATEADD('day', 1 - DAYOFWEEKISO("ORDERED_AT"), CAST("ORDERED_AT" AS DATE))
+                    AS "ordered_at__week"
+         FROM "ORDERS"
+         WHERE "ORDERED_AT" >= DATE '2024-01-01'
+         GROUP BY ALL
+         ORDER BY "ordered_at__week" ASC
+
+   .. tab-item:: Databricks
+      :sync: databricks
+
+      .. code-block:: sql
+
+         SELECT MEASURE(`revenue`) AS `revenue`,
+                CAST(DATE_TRUNC('week', `ordered_at`) AS DATE) AS `ordered_at__week`
+         FROM `orders`
+         WHERE `ordered_at` >= DATE '2024-01-01'
+         GROUP BY ALL
+         ORDER BY `ordered_at__week` ASC
+
+   .. tab-item:: DuckDB
+      :sync: duckdb
+
+      .. code-block:: sql
+
+         SELECT "revenue" AS "revenue", "ordered_at__week" AS "ordered_at__week"
+         FROM semantic_view(
+             'orders',
+             dimensions := ['CAST(DATE_TRUNC(''week'', "ordered_at") AS DATE) AS "ordered_at__week"'],
+             metrics := ['revenue'],
+             where_clause := '"ordered_at" >= DATE ''2024-01-01'''
+         )
+         ORDER BY "ordered_at__week" ASC
+
+      Grains on DuckDB need version 0.16.0 or later of the ``semantic_views`` extension,
+      which runs on DuckDB 2.0.
+
+The result column is the field's name, two underscores and the grain, so this query's rows
+have the keys ``revenue`` and ``ordered_at__week``. The backends disagree on what a period
+looks like by default, so Semolina makes them agree:
+
+- A grain of ``"day"`` or coarser returns a ``datetime.date``, the first day of the period.
+  A finer grain returns a ``datetime.datetime`` of the same kind as the field: naive for a
+  timestamp without a time zone, aware for one with. Databricks' ``DATE_TRUNC`` would turn
+  a ``TIMESTAMP_NTZ`` into a ``TIMESTAMP`` in the session time zone, so on Databricks
+  Semolina subtracts the minutes and seconds below the grain instead.
+- Weeks start on Monday everywhere. Snowflake's ``DATE_TRUNC('week', ...)`` follows the
+  session's ``WEEK_START`` parameter, so Semolina doesn't use it there.
+
+A period can sit beside the field it comes from, or beside another grain of the same field:
+``.dimensions(Orders.ordered_at.grain("month"), Orders.ordered_at.grain("week"))`` is fine.
+
+Filter on the field rather than on the grain. ``.where()`` narrows the rows before they are
+grouped, so the base field already does what a filter on the period would, and filtering
+the grain itself raises ``TypeError``:
+
+.. code-block:: python
+
+   week == datetime.date(2024, 1, 1)
+   # TypeError: 'ordered_at__week' cannot be filtered. Filter 'ordered_at' instead, ...
+
+Semolina reads the field's declared type to check the grain. A ``Dimension[datetime.date]``
+has no grain finer than a day, so ``Orders.ordered_on.grain("hour")`` raises
+``ValueError``. Calling ``.grain()`` on a field declared with any type other than ``date``
+or ``datetime`` raises ``TypeError``. An optional declaration such as
+``Dimension[datetime.date | None]`` counts as the type it wraps. An undeclared
+``Dimension()`` takes every grain.
+
 Use query shorthand
 -------------------
 
@@ -634,6 +742,7 @@ See also
 
 - :ref:`tutorial-first-query` -- one query from model to rows, start to finish
 - :ref:`tutorial-shaping-a-report` -- filtering, ordering and limiting run step by step
+- :ref:`howto-query-by-name` -- build the same queries, grains included, from field names
 - :ref:`howto-filtering` -- field operators, named methods and boolean composition
 - :ref:`howto-models` -- define :py:class:`~semolina.models.SemanticView` subclasses
   with field types

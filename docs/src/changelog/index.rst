@@ -17,6 +17,13 @@ the field methods. Mistakes raise the new ``SemolinaSpecError`` with the path to
 value, and ``query_spec_schema()`` gives a JSON Schema listing one model's field names, to
 use as a tool's input schema. :ref:`howto-query-by-name` has the details.
 
+**Group by a time grain.** ``Orders.ordered_at.grain("week")`` selects a date or timestamp
+dimension rolled up to a year, quarter, month, week, day, hour, minute or second, in a
+column named ``ordered_at__week``. Every backend returns a ``date`` for a day or coarser and
+a ``datetime`` below that, and weeks start on Monday, whatever Snowflake's ``WEEK_START``
+says. On DuckDB it needs ``semantic_views`` 0.16.0 or later. :ref:`howto-time-grain` has
+the details.
+
 **Fixed: date and time filters on Snowflake.** A ``.where()`` value that is a ``date``,
 ``datetime`` or ``time`` failed at execution on Snowflake with ``Unsupported bind param
 type``, because the Snowflake ADBC driver can't bind those types. Semolina now writes them

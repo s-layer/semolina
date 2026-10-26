@@ -1,0 +1,7 @@
+SELECT
+  AGG("REVENUE") AS "revenue",
+  TIMESTAMP_TRUNC("ORDERED_AT", SECOND) AS "ordered_at__second"
+FROM "ORDERS_VIEW"
+GROUP BY ALL
+ORDER BY
+  "ordered_at__second" ASC NULLS LAST

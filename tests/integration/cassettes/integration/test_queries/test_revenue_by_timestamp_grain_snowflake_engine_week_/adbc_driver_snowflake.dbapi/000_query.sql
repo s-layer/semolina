@@ -1,0 +1,7 @@
+SELECT
+  AGG("REVENUE") AS "revenue",
+  DATE_ADD(CAST("ORDERED_AT" AS DATE), 1 - DAYOFWEEK_ISO("ORDERED_AT"), 'DAY') AS "ordered_at__week"
+FROM "ORDERS_VIEW"
+GROUP BY ALL
+ORDER BY
+  "ordered_at__week" ASC NULLS LAST

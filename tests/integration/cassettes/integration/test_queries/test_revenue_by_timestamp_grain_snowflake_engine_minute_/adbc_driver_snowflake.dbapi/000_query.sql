@@ -1,0 +1,7 @@
+SELECT
+  AGG("REVENUE") AS "revenue",
+  TIMESTAMP_TRUNC("ORDERED_AT", MINUTE) AS "ordered_at__minute"
+FROM "ORDERS_VIEW"
+GROUP BY ALL
+ORDER BY
+  "ordered_at__minute" ASC NULLS LAST

@@ -1,0 +1,7 @@
+SELECT
+  AGG("REVENUE") AS "revenue",
+  CAST(TIMESTAMP_TRUNC("ORDERED_ON", MONTH) AS DATE) AS "ordered_on__month"
+FROM "ORDERS_VIEW"
+GROUP BY ALL
+ORDER BY
+  "ordered_on__month" DESC NULLS FIRST
