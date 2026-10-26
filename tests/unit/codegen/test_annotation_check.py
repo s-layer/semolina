@@ -1330,10 +1330,15 @@ class TestMetadataIsComparedToo:
         assert report.has_drift is True
         assert "Old words" in report.detail and "Sales by country" in report.detail
 
-    def test_a_model_written_with_docstrings_still_matches(
+    def test_a_model_generated_before_metadata_arguments_drifts(
         self, annotated_engine: Engine, tmp_path: pathlib.Path
     ) -> None:
-        """Codegen wrote descriptions as attribute docstrings before ``description=``."""
+        """
+        The shape codegen wrote before these arguments: docstrings, no synonyms, no view text.
+
+        It no longer describes the warehouse, so it drifts until it is regenerated; the
+        docstring is not read as a description.
+        """
         from semolina.codegen.model_reader import read_committed_model
 
         path = tmp_path / "models.py"
@@ -1341,13 +1346,41 @@ class TestMetadataIsComparedToo:
             "from semolina import Dimension, Metric, SemanticView\n"
             "\n"
             "\n"
-            "class Annotated(SemanticView, view='annotated', description='Sales by country'):\n"
-            "    country = Dimension[str](synonyms=('nation', 'land'))\n"
-            "    revenue = Metric[float | None](synonyms=('sales',))\n"
+            "class Annotated(SemanticView, view='annotated'):\n"
+            "    country = Dimension[str]()\n"
+            "    revenue = Metric[float | None]()\n"
             '    """Gross revenue"""\n',
             encoding="utf-8",
         )
-        committed = read_committed_model(path)[0]
 
-        assert committed.fields["revenue"].metadata["description"] == "Gross revenue"
-        assert check_view(annotated_engine, "annotated", committed).has_drift is False
+        report = check_view(annotated_engine, "annotated", read_committed_model(path)[0])
+
+        assert report.has_drift is True
+        assert "Sales by country" in report.detail
+        assert "synonyms" in row_named(report, "country").detail
+        assert "description" in row_named(report, "revenue").detail
+
+    def test_an_unreadable_argument_is_not_compared(
+        self, annotated_engine: Engine, tmp_path: pathlib.Path
+    ) -> None:
+        """The reader warned that it could not evaluate it, so it cannot have drifted."""
+        from semolina.codegen.model_reader import read_committed_model_file
+
+        path = tmp_path / "models.py"
+        path.write_text(
+            "from semolina import Dimension, Metric, SemanticView\n"
+            "\n"
+            "\n"
+            "class Annotated(SemanticView, view='annotated', description=make_description()):\n"
+            "    country = Dimension[str](synonyms=make_synonyms())\n"
+            "    revenue = Metric[float | None](\n"
+            "        description=make_description(), synonyms=('sales',)\n"
+            "    )\n",
+            encoding="utf-8",
+        )
+        read = read_committed_model_file(path)
+
+        report = check_view(annotated_engine, "annotated", read.models[0])
+
+        assert len(read.warnings) == 3, read.warnings
+        assert report.has_drift is False, report

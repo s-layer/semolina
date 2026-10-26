@@ -1152,35 +1152,33 @@ class V(SemanticView, view="v", description="Sales by country"):
             "Sales by country"
         )
 
-    def test_an_attribute_docstring_reads_as_the_description(self, tmp_path: Path) -> None:
+    def test_an_attribute_docstring_is_not_read_as_the_description(self, tmp_path: Path) -> None:
+        """A docstring is documentation you wrote; only ``description=`` is compared."""
         source = '''\
 from semolina import Dimension, Metric, SemanticView
 
 
 class V(SemanticView, view="v"):
     revenue = Metric[float | None]()
-    """
-    Gross revenue.
-    """
+    """Revenue in cents; see the finance wiki."""
     country = Dimension[str]()
 '''
         model = read_committed_model(_write(tmp_path, source))[0]
 
-        assert model.fields["revenue"].metadata == {"description": "Gross revenue."}
-        assert model.fields["country"].metadata == {}
+        assert model.fields["revenue"].metadata == {}
 
-    def test_a_description_argument_wins_over_a_docstring(self, tmp_path: Path) -> None:
-        source = '''\
-from semolina import Metric, SemanticView
+    def test_a_set_of_synonyms_reads_as_a_tuple(self, tmp_path: Path) -> None:
+        """``Field`` takes any iterable of strings, so a set literal is a valid spelling."""
+        source = """\
+from semolina import Dimension, SemanticView
 
 
 class V(SemanticView, view="v"):
-    revenue = Metric[float | None](description="From the argument")
-    """From the docstring"""
-'''
-        model = read_committed_model(_write(tmp_path, source))[0]
+    country = Dimension[str](synonyms={"nation"})
+"""
+        field = read_committed_model(_write(tmp_path, source))[0].fields["country"]
 
-        assert model.fields["revenue"].metadata == {"description": "From the argument"}
+        assert field.metadata == {"synonyms": ("nation",)}
 
     def test_an_unevaluable_argument_is_warned_about_not_compared(self, tmp_path: Path) -> None:
         source = """\
@@ -1194,7 +1192,9 @@ class V(SemanticView, view="v", description=make_description()):
         model = read.models[0]
 
         assert model.fields["revenue"].metadata == {}
+        assert model.fields["revenue"].unreadable == frozenset({"label"})
         assert model.description is None
+        assert model.unreadable == frozenset({"description"})
         assert any("label=" in w and "not compared" in w for w in read.warnings), read.warnings
         assert any("description=" in w and "not compared" in w for w in read.warnings), (
             read.warnings
