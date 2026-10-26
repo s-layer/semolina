@@ -39,7 +39,11 @@ Pass the model and a dict to :py:func:`~semolina.spec.build_query`:
        {
            "metrics": ["revenue"],
            "dimensions": ["country"],
-           "where": {"field": "region", "op": "in", "value": ["West", "East"]},
+           "where": {
+               "field": "region",
+               "op": "in",
+               "value": ["West", "East"],
+           },
            "order_by": ["-revenue"],
            "limit": 10,
        },
@@ -73,7 +77,15 @@ object when you need ``NULLS FIRST`` or ``NULLS LAST``:
 
 .. code-block:: python
 
-   {"order_by": [{"field": "revenue", "direction": "desc", "nulls": "last"}]}
+   {
+       "order_by": [
+           {
+               "field": "revenue",
+               "direction": "desc",
+               "nulls": "last",
+           }
+       ]
+   }
 
 Write filters as data
 ---------------------
@@ -89,8 +101,18 @@ filters. Pass ``where`` a list and every filter in it must hold.
                {"field": "country", "op": "eq", "value": "US"},
                {
                    "and": [
-                       {"field": "region", "op": "eq", "value": "West"},
-                       {"not": {"field": "revenue", "op": "lt", "value": 1000}},
+                       {
+                           "field": "region",
+                           "op": "eq",
+                           "value": "West",
+                       },
+                       {
+                           "not": {
+                               "field": "revenue",
+                               "op": "lt",
+                               "value": 1000,
+                           }
+                       },
                    ]
                },
            ]
@@ -137,7 +159,13 @@ string as it was given.
 
 .. code-block:: python
 
-   {"where": {"field": "sold_on", "op": "between", "value": ["2024-01-01", "2024-03-31"]}}
+   {
+       "where": {
+           "field": "sold_on",
+           "op": "between",
+           "value": ["2024-01-01", "2024-03-31"],
+       }
+   }
 
 Report mistakes back to the caller
 ----------------------------------

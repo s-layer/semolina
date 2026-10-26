@@ -134,8 +134,10 @@ An ``order_by`` entry: a field name, ascending, or the name after ``-``, descend
 
 class QuerySpec(TypedDict, total=False):
     """
-    A query as plain data. Every key is optional, and ``null`` counts as leaving it out, but
-    at least one field must be selected.
+    A query as plain data.
+
+    Every key is optional, and ``null`` counts as leaving it out, but at least one field
+    must be selected.
 
     Attributes:
         metrics: Metric names to aggregate.
@@ -776,9 +778,10 @@ def query_spec_schema(model: type[SemanticView]) -> dict[str, Any]:
     tie each ``op`` to the shape of ``value`` it takes. Hand it to a language model as a
     tool's input schema and the model can only name fields that exist.
 
-    Data the schema accepts builds without a :class:`~semolina.exceptions.SemolinaSpecError`, with two
-    exceptions the schema cannot express: an ``order_by`` on a dimension the query does
-    not select, and a date string the field's declared type cannot parse.
+    Data the schema accepts builds without a
+    :class:`~semolina.exceptions.SemolinaSpecError`, with two exceptions the schema cannot
+    express: an ``order_by`` on a dimension the query does not select, and a date string
+    the field's declared type cannot parse.
 
     Args:
         model: The :class:`~semolina.models.SemanticView` subclass.
