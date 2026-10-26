@@ -60,9 +60,15 @@ build                cancelled returns   uncancelled
 That is what lets the ``aexecute`` test carry the elapsed-time claim on
 Semolina's own SQL, and it is also why the claim is not vacuous: at 0.81 of its
 baseline the old build fails the same assertion the new one passes at 0.17. The
-``duckdb==1.5.5`` pin in ``pyproject.toml`` is what makes the fixed build the one
-installed, so moving that pin backwards turns this file red rather than quietly
-weakening it.
+``duckdb`` pin in ``pyproject.toml`` is what makes a fixed build the one
+installed, so moving that pin back below 1.5.5 turns this file red rather than
+quietly weakening it.
+
+DuckDB 2.0 moved where the work happens. Its ADBC driver streams, so
+``execute()`` returns at once and the query runs while the rows are fetched
+(under 1.5 the whole aggregate ran inside ``execute()``). Both long-query tests
+therefore put the deadline around execute *and* fetch, matching the
+measurement, which has always timed the two together.
 
 Cassettes cannot cover any of this: ``ReplayCursor.adbc_cancel()`` is a
 deliberate no-op and replay returns instantly, so nothing can ever land
@@ -721,7 +727,11 @@ class TestCancellationReachesTheDriver:
                 try:
                     with anyio.move_on_after(deadline) as scope:
                         try:
+                            # DuckDB 2.0 streams: execute() returns at once and
+                            # the work runs while the rows are fetched, so the
+                            # deadline has to cover both, as the measurement does.
                             await cursor.execute(heavy_database.plain_sql)
+                            await cursor.fetchall()
                         except BaseException as exc:
                             observed = exc
                             raise
@@ -766,11 +776,16 @@ class TestCancellationThroughAexecute:
     SQL — which on DuckDB means the ``semantic_view()`` table function. This is
     the production path, so it carries the full set of claims: the query stops
     early, the deadline surfaces as the framework's cancellation and not as the
-    driver's interrupt error, ``aexecute`` raises instead of handing back a
-    cursor for a query that was cancelled, and the pool still serves the next
-    caller. That last group is the ``except BaseException`` arm's one job,
-    exercised on the one path where the cancellation genuinely arrives
-    mid-statement.
+    driver's interrupt error, the cursor block closes its cursor while the
+    cancellation propagates, and the pool still serves the next caller.
+
+    Since DuckDB 2.0 the driver streams: ``aexecute()`` returns as soon as the
+    statement is prepared, and the aggregate runs while the rows are fetched.
+    So the deadline lands in ``fetchall_rows()`` here, the shape the web-API
+    how-to recommends (one time budget around the whole ``async with`` block).
+    A cancellation that arrives inside ``aexecute()`` itself, and the
+    ``except BaseException`` arm that returns its slot, are covered without
+    timing by :class:`TestDeterministicCancellation`.
 
     The early-stop assertion here is the one that matters for the cost
     argument, because it is Semolina's own SQL rather than a hand-written twin:
@@ -807,7 +822,13 @@ class TestCancellationThroughAexecute:
             try:
                 with anyio.move_on_after(deadline) as scope:
                     try:
-                        cursor = await heavy_async_engine.aexecute(_heavy_query())
+                        # On DuckDB 2.0 aexecute() returns once the statement is
+                        # prepared and the aggregate runs during the fetch, so the
+                        # deadline lands in fetchall_rows() and the cursor block's
+                        # teardown runs while the cancellation propagates.
+                        async with await heavy_async_engine.aexecute(_heavy_query()) as cur:
+                            cursor = cur
+                            await cur.fetchall_rows()
                     except BaseException as exc:
                         observed = exc
                         raise
@@ -821,7 +842,9 @@ class TestCancellationThroughAexecute:
             elapsed = time.perf_counter() - start
 
             assert scope.cancelled_caught
-            assert cursor is None, "a cancelled aexecute must raise, never return a cursor"
+            assert cursor is not None and cursor._closed, (
+                "the cursor block must close its cursor while the cancellation propagates"
+            )
             assert isinstance(observed, cancelled_exc_class)
             assert elapsed < measured * ABORT_EVIDENCE_RATIO, (
                 f"the cancelled semantic_view() query took {elapsed:.2f}s against "
