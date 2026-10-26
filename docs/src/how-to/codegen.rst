@@ -372,6 +372,8 @@ Understand the generated output
 
       .. code-block:: python
 
+         import decimal
+
          from semolina import Dimension, Fact, Metric, SemanticView
 
 
@@ -379,8 +381,15 @@ Understand the generated output
              unit_price = Fact[int]()
              country = Dimension[str]()
              region = Dimension[str]()
-             revenue = Metric[int | None]()
-             cost = Metric[int | None]()
+             # HUGEINT
+             revenue = Metric[decimal.Decimal | None]()
+             # HUGEINT
+             cost = Metric[decimal.Decimal | None]()
+
+      DuckDB types a ``SUM`` over an ``INTEGER`` column as ``HUGEINT``, a 128-bit integer
+      with no Python ``int`` counterpart in Arrow, so it arrives as a ``decimal.Decimal``
+      and codegen notes the source type above the field. Cast the sum in the view, as in
+      ``CAST(SUM(s.revenue) AS BIGINT)``, if you want an ``int``.
 
 These views carry no comments or synonyms, so each field is a bare constructor call. Where
 the warehouse records a comment, synonyms, a display name or ``S_LAYER_*`` tags, codegen
@@ -533,9 +542,10 @@ The run writes nothing to stdout. One table per view goes to stderr:
    │ unit_price │ int               │ int               │ execute-schema │ match  │
    │ country    │ str               │ str               │ execute-schema │ match  │
    │ region     │ str               │ str               │ execute-schema │ match  │
-   │ revenue    │ decimal.Decimal | │ int | None        │ execute-schema │ drift  │
-   │            │ None              │                   │                │        │
-   │ cost       │ int | None        │ int | None        │ execute-schema │ match  │
+   │ revenue    │ int | None        │ decimal.Decimal | │ execute-schema │ drift  │
+   │            │                   │ None              │                │        │
+   │ cost       │ decimal.Decimal | │ decimal.Decimal | │ execute-schema │ match  │
+   │            │ None              │ None              │                │        │
    └────────────┴───────────────────┴───────────────────┴────────────────┴────────┘
 
 The comparison is per field, and the right-hand side is the **result schema** of a

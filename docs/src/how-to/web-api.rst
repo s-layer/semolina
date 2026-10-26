@@ -218,6 +218,11 @@ inside the block, and under ``anyio.fail_after()``, it is the loop's own cancell
 A cancelled ``aexecute()`` raises rather than handing back a cursor. There is no half-open
 cursor left over to find and close, and the ``async with`` above never starts.
 
+Keep the fetch inside the time budget too, as the snippet does. Some drivers stream: DuckDB
+2.0 returns from ``aexecute()`` as soon as the statement is prepared and runs the query while
+the rows are fetched, so a budget around ``aexecute()`` alone would cover almost none of the
+work.
+
 The work stops in the warehouse, not only in your process. While the worker thread is still
 inside the driver, adbc-poolhouse calls ``adbc_cancel`` on the connection from inside a
 shield, so the statement is aborted rather than left to finish for nobody: a cancelled
@@ -239,7 +244,7 @@ cancellation you need to see.
 .. note::
 
    Aborting a ``semantic_view()`` query on DuckDB needs the ``semantic_views`` community
-   extension at 0.12.0 or newer, which is what the pinned ``duckdb==1.5.6`` in the
+   extension at 0.12.0 or newer, which is what the pinned ``duckdb==2.0.0`` in the
    ``semolina[duckdb]`` extra installs. Builds below that floor evaluated the inner query on a
    separate client context, where DuckDB's per-context interrupt flag was never read, so a
    cancelled aggregate finished its work first and only then reported the interrupt.

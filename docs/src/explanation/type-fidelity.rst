@@ -42,7 +42,7 @@ planned.
 Where the catalogue and the result disagree
 -------------------------------------------
 
-Measured against DuckDB 1.5.6 with the ``semantic_views`` extension, over a
+Measured against DuckDB 2.0.0 with the ``semantic_views`` extension, over a
 table whose ``order_total`` column is ``DECIMAL(10, 2)`` and whose
 ``order_count`` column is ``INTEGER``:
 
@@ -51,7 +51,7 @@ table whose ``order_total`` column is ``DECIMAL(10, 2)`` and whose
   widen; picking one existing value out of a column does not.
 - ``AVG(order_count)`` comes back as a double, so the row holds a ``float`` for
   a column that only ever held whole numbers. ``SUM(order_count)`` over the same
-  column stays an integer.
+  column comes back as DuckDB's 128-bit ``HUGEINT``, which arrives as a ``Decimal``.
 - ``COUNT(order_total)`` comes back as a 64-bit integer while
   ``MIN(order_count)`` comes back as a 32-bit one.
 

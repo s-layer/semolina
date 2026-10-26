@@ -2505,7 +2505,7 @@ class TestAnnotationCheckAgainstLiveDuckDB:
         source = _generate_model(duckdb_file_backed_db, model)
         model.write_text(
             source.replace(
-                "revenue = Metric[int | None]()", "revenue = Metric[decimal.Decimal | None]()"
+                "revenue = Metric[decimal.Decimal | None]()", "revenue = Metric[int | None]()"
             ),
             encoding="utf-8",
         )

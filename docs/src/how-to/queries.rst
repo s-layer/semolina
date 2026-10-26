@@ -212,9 +212,8 @@ instead. Its argument is ``"year"``, ``"quarter"``, ``"month"``, ``"week"``, ``"
          ORDER BY "ordered_at__week" ASC
 
       Grains on DuckDB need version 0.16.0 or later of the ``semantic_views`` extension,
-      which runs on DuckDB 2.0. The ``semolina[duckdb]`` extra pins DuckDB 1.5.6, which
-      installs an older ``semantic_views``, so a grain query doesn't run on that pin.
-      ``to_sql("duckdb")`` still renders it.
+      which runs on DuckDB 2.0. The ``semolina[duckdb]`` extra pins DuckDB 2.0.0, which
+      installs it.
 
 The result column is the field's name, two underscores and the grain, so this query's rows
 have the keys ``revenue`` and ``ordered_at__week``. The backends disagree on what a period

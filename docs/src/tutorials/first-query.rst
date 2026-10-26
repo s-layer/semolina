@@ -182,11 +182,15 @@ unregisters the engine and disposes its pool at the end of the block.
               s.region AS region
           )
           METRICS (
-              s.revenue AS SUM(s.revenue),
-              s.cost AS SUM(s.cost)
+              s.revenue AS CAST(SUM(s.revenue) AS BIGINT),
+              s.cost AS CAST(SUM(s.cost) AS BIGINT)
           )
       """)
       conn.close()
+
+   Each metric casts its sum to ``BIGINT``. Left alone, DuckDB types a ``SUM`` over an
+   ``INTEGER`` column as a 128-bit ``HUGEINT``, which arrives in Python as a
+   ``decimal.Decimal``. The cast keeps the tutorial's totals plain ``int`` values.
 
    Then build and register a DuckDB engine pointing at the file:
 

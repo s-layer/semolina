@@ -29,7 +29,7 @@ they stop rediscovering the answer per driver.
 |---|---|---|---|---|---|
 | snowflake | `adbc-driver-snowflake` 1.10.0 (Foundry tag `go/v1.10.0`) | yes | implemented in `go/statement.go` via `gosnowflake.WithDescribeOnly`, which is a describe-only metadata round trip rather than a warehouse execution; refuses with `StatusNotImplemented` ("executing schema with bound params not yet implemented") whenever bind parameters are present | only for parameterized queries | driver-source |
 | databricks | Foundry `go/v0.1.3` | no | `go/statement.go` embeds `driverbase.StatementImplBase` and defines no `ExecuteSchema`, so the inherited `driverbase-go` default returns `StatusNotImplemented` | yes, the zero-row fallback is the only path | driver-source |
-| duckdb | duckdb v1.5.6 | yes | probed in this process and answered by the `execute-schema` route; the `WHERE 1=0` fallback returns an equal schema (`test_zero_row_fallback_matches_execute_schema`) | no | live |
+| duckdb | duckdb v2.0.0 | yes | probed in this process and answered by the `execute-schema` route; the `WHERE 1=0` fallback returns an equal schema (`test_zero_row_fallback_matches_execute_schema`) | no | live |
 
 "Driver X implements `adbc_execute_schema`" and "field F came back as type T" are two
 different claims with two different sources. The first is answered from driver source at a
@@ -53,7 +53,7 @@ rather than `cassette-file`.
 | duckdb | n_order_totals | metric | BIGINT | live | int | int64 | live (execute-schema) | int | match |
 | duckdb | region | dimension | VARCHAR | live | str | string | live (execute-schema) | str | match |
 | duckdb | region_list | metric | VARCHAR[] | live | TODO: VARCHAR[] | list<l: string> | live (execute-schema) | list | mismatch |
-| duckdb | total_order_count | metric | BIGINT | live | int | int64 | live (execute-schema) | int | match |
+| duckdb | total_order_count | metric | HUGEINT | live | decimal.Decimal | decimal128(38, 0) | live (execute-schema) | decimal.Decimal | match |
 | duckdb | total_order_value | metric | DECIMAL(38,2) | live | decimal.Decimal | decimal128(38, 2) | live (execute-schema) | decimal.Decimal | match |
 | snowflake | country | dimension | {"type": "TEXT"} | derived-from-code | str | string | cassette-file | str | match |
 | snowflake | revenue | metric | {"type": "FIXED", "scale": 0} | derived-from-code | decimal.Decimal | decimal128(38, 0) | cassette-file | decimal.Decimal | match |
@@ -67,8 +67,8 @@ actually returns. Each names the minimal query that produced it, the measured Ar
 the Python type the value arrives as, and a contrast case — without the contrast a single
 measurement is a coincidence rather than a rule.
 
-All four were measured through `semantic_view(...)` against DuckDB v1.5.6 with
-`semantic_views` v0.13.0, both read from the running database rather than quoted from
+All four were measured through `semantic_view(...)` against DuckDB v2.0.0 with
+`semantic_views` v0.16.0, both read from the running database rather than quoted from
 `pyproject.toml`. Vendor rules are cited where a vendor publishes one and marked
 undocumented where none exists; a rule is never inferred from a measurement.
 
@@ -109,7 +109,8 @@ catalogue reports `DOUBLE`, the result schema resolves to `double`, and the valu
 `float`. Averaging leaves the integer domain entirely.
 
 **Contrast:** `total_order_count` is `SUM(o.order_count)` over the same `INTEGER` column and
-measures `int64` -> `int`. It is the aggregate that decides, not the column.
+measures `decimal128(38, 0)` -> `decimal.Decimal`. It is the aggregate that decides, not the
+column.
 
 **Vendor rules.** Databricks documents `avg(DECIMAL(p, s))` as `DECIMAL(p+4, s+4)` and
 DOUBLE "in all other cases", which puts Databricks and DuckDB in disagreement on
@@ -132,13 +133,11 @@ schema resolves to `int64`, and the value arrives as `int`.
 measures `int32`, not `int64`. "Integer metric" is therefore not one Arrow type, and a type
 map keyed on the column type would get one of these two wrong whichever width it picked.
 
-**The trap this row encodes.** A hand-written `SELECT SUM(order_count) FROM
-type_fidelity_orders` over that same column measures `decimal128(38, 0)` and arrives as
-`decimal.Decimal`, because plain DuckDB sums an `INTEGER` into a `HUGEINT`. Through
-`semantic_view(...)` the extension casts down and the user receives `int64` -> `int`.
-Probing outside `semantic_view(...)` would record a type nobody ever receives, so
-`tests/unit/test_type_fidelity_duckdb.py` asserts both halves and the probe cannot be moved
-onto the wrong path unnoticed.
+**What this row encodes.** Plain DuckDB sums an `INTEGER` into a `HUGEINT`, which arrives
+over Arrow as `decimal128(38, 0)`. Since `semantic_views` 0.16.0 a `semantic_view(...)`
+query keeps DuckDB's own result types, so the user receives `decimal128(38, 0)` ->
+`decimal.Decimal` there too. Earlier builds narrowed the sum to `BIGINT`, so a model
+generated against them annotated this metric `int`.
 
 ### 4. Metric nullability on empty groups
 
