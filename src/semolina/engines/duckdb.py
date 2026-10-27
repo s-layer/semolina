@@ -231,14 +231,24 @@ def _unquote_identifier(name: str) -> str:
     return name
 
 
+_DESCRIBED_KINDS: dict[str, str] = {
+    "DIMENSION": "dimension",
+    "METRIC": "metric",
+    "DERIVED_METRIC": "metric",
+    "FACT": "fact",
+}
+"""``DESCRIBE SEMANTIC VIEW``'s object kinds for members, to the kind a field takes."""
+
+
 def _parse_describe_semantic_view(
     rows: list[tuple[str, str, str, str, str]],
 ) -> dict[str, dict[str, str]]:
     """
     Parse DESCRIBE SEMANTIC VIEW rows into a field-name -> properties dict.
 
-    Only includes DIMENSION, METRIC, FACT rows. Skips TABLE, RELATIONSHIP,
-    SEMANTIC_VIEW, MATERIALIZATION, etc.
+    Only includes DIMENSION, METRIC, DERIVED_METRIC and FACT rows. Skips TABLE,
+    RELATIONSHIP, SEMANTIC_VIEW, MATERIALIZATION, etc. A ``DERIVED_METRIC``, one built
+    from other metrics, is a metric to a query, so it is recorded as one.
 
     Args:
         rows: Raw rows from ``DESCRIBE SEMANTIC VIEW``. Each row is a 5-tuple
@@ -251,9 +261,10 @@ def _parse_describe_semantic_view(
     """
     fields: dict[str, dict[str, str]] = defaultdict(dict)
     for object_kind, object_name, _parent_entity, prop, prop_value in rows:
-        if object_kind in ("DIMENSION", "METRIC", "FACT"):
+        kind = _DESCRIBED_KINDS.get(object_kind)
+        if kind is not None:
             if "kind" not in fields[object_name]:
-                fields[object_name]["kind"] = object_kind.lower()
+                fields[object_name]["kind"] = kind
             fields[object_name][prop.lower()] = prop_value
     return dict(fields)
 
@@ -503,13 +514,14 @@ class DuckDBEngine(Engine):
         Uses a two-step approach:
 
         1. ``DESCRIBE SEMANTIC VIEW {name}`` to discover field names, kinds
-           (DIMENSION/METRIC/FACT), access modifiers (PUBLIC/PRIVATE),
-           comments and SQL types. The ``semantic_views`` extension reports a
-           member's ``DATA_TYPE`` from v0.14.0; older releases leave it empty
-           for any view created since v0.10.0, so their types are not used.
-           From v0.17.0 a member's ``TAGS`` row gives its ``S_LAYER_LABEL``,
-           ``S_LAYER_KIND`` and ``S_LAYER_SPEC`` tags, read as on Snowflake into
-           its label and format; before it the view reports them unread.
+           (DIMENSION/METRIC/FACT, with a DERIVED_METRIC read as a metric),
+           access modifiers (PUBLIC/PRIVATE), comments and SQL types. The
+           ``semantic_views`` extension reports a member's ``DATA_TYPE`` from
+           v0.14.0; older releases leave it empty for any view created since
+           v0.10.0, so their types are not used. From v0.17.0 a member's
+           ``TAGS`` row gives its ``S_LAYER_LABEL``, ``S_LAYER_KIND`` and
+           ``S_LAYER_SPEC`` tags, read as on Snowflake into its label and
+           format; before it the view reports them unread.
         2. ``DESCRIBE SELECT * FROM semantic_view(...)`` to resolve the SQL
            type of each member step 1 left untyped: all of them on an older
            extension, and on a newer one only a member the extension could not
