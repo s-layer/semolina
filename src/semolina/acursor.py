@@ -473,8 +473,8 @@ class AsyncSemolinaCursor(_CursorBase):
           offending field.
         - ``validate=True`` — **types are coerced.** Pydantic converts per row where it legally
           can (``decimal128`` into ``float``) and raises ``ValidationError`` where it cannot
-          (``decimal128`` into ``int``). The structural type comparison is skipped so it
-          cannot refuse a narrowing the validated path performs correctly.
+          (a fractional ``decimal128`` into ``int``). The structural type comparison is
+          skipped so it cannot refuse a narrowing the validated path performs correctly.
 
         Column *presence* is checked on both settings: no amount of coercion invents a column.
 
