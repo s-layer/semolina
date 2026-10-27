@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from typing import Literal
 
-    from s_layer_semantic_formats import Kind, SLayerBlock
+    from s_layer_semantic_formats import Kind, SemanticFormat
 
 __all__ = [
     "PLACEHOLDER_FIELD_NAME",
@@ -99,7 +99,7 @@ def semantic_format_from_tags(
     member: str,
     tags: Mapping[str, str],
     member_type: Literal["metric", "dimension", "fact"],
-) -> SLayerBlock | None:
+) -> SemanticFormat | None:
     """
     Rebuild a member's S-LAYER block from its ``S_LAYER_KIND`` and ``S_LAYER_SPEC`` tags.
 
@@ -226,7 +226,7 @@ def semantic_format_from_databricks_format(
     member: str,
     native: object,
     member_type: Literal["metric", "dimension", "fact"],
-) -> SLayerBlock | None:
+) -> SemanticFormat | None:
     """
     Read a Databricks metric view column's native ``format`` as an S-LAYER block.
 

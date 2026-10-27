@@ -446,7 +446,7 @@ strings except a bare string, which raises ``TypeError`` because it would read a
 synonym per character.
 
 ``semantic_format`` says what the values mean: a currency, a percentage, a date, an
-identifier. It takes an S-LAYER block, either as a mapping or as an ``SLayerBlock`` from
+identifier. It takes an S-LAYER block, either as a mapping or as a ``SemanticFormat`` from
 `s-layer-semantic-formats <https://pypi.org/project/s-layer-semantic-formats/>`_, and
 validates it when the class is defined. A block whose kind doesn't fit the field, such as
 a currency on a ``Dimension``, raises ``ValueError``. So does a block that carries its own
@@ -479,7 +479,7 @@ can serve them beside the data:
    }
 
 An argument you didn't pass reads as ``None``, or ``()`` for ``synonyms``. A
-``semantic_format`` comes back as an ``SLayerBlock``, which is a Pydantic model, so
+``semantic_format`` comes back as a ``SemanticFormat``, which is a Pydantic model, so
 ``model_dump()`` turns it into JSON-ready data with the defaults filled in.
 
 Where the warehouse holds them

@@ -753,11 +753,11 @@ class TestFieldMetadata:
             Dimension[str](synonyms="nation")
 
     def test_a_format_mapping_is_validated_into_a_block(self) -> None:
-        from s_layer_semantic_formats import SLayerBlock, validate_block
+        from s_layer_semantic_formats import SemanticFormat, validate_block
 
         field = Metric[float](semantic_format=self.CURRENCY)
 
-        assert isinstance(field.semantic_format, SLayerBlock)
+        assert isinstance(field.semantic_format, SemanticFormat)
         assert field.semantic_format == validate_block(self.CURRENCY, "metric")
 
     def test_a_block_is_accepted_as_is(self) -> None:
