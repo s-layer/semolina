@@ -198,6 +198,75 @@ class TestDuckDBIntrospectAnnotations:
         assert duckdb_engine.introspect("orders").description == ""
 
 
+class TestDuckDBIntrospectDerivedMetrics:
+    """
+    A derived metric, one built from other metrics, is a metric like any other.
+
+    ``DESCRIBE SEMANTIC VIEW`` reports it as ``DERIVED_METRIC``, with no ``TABLE`` row, and
+    introspection used to read only ``METRIC`` rows, so the generated model left it out.
+    """
+
+    @pytest.fixture
+    def derived_view(self, duckdb_engine: Any) -> Any:
+        """Add ``derived``, whose public and private derived metrics sit on ``revenue``."""
+        with duckdb_engine.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                CREATE SEMANTIC VIEW derived AS
+                TABLES (o AS orders_data PRIMARY KEY (id))
+                DIMENSIONS (o.region AS o.region)
+                METRICS (
+                    o.revenue AS SUM(o.amount),
+                    double_revenue AS revenue * 2,
+                    PRIVATE hidden_double AS revenue * 2
+                )
+                """
+            )
+            cur.close()
+            conn.commit()
+        return duckdb_engine
+
+    def test_a_derived_metric_is_introspected_as_a_metric(self, derived_view: Any) -> None:
+        """It keeps its type, and a private one is left out as a private metric is."""
+        fields = {f.name: f for f in derived_view.introspect("derived").fields}
+        assert set(fields) == {"region", "revenue", "double_revenue"}
+        assert fields["double_revenue"].field_type == "metric"
+        assert fields["double_revenue"].data_type == "float"
+
+    def test_the_generated_model_queries_the_derived_metric(self, derived_view: Any) -> None:
+        """The field the model declares for it names a column the view answers."""
+        import sys
+        import types
+
+        import semolina
+        from semolina.codegen.python_renderer import render_views
+
+        source = render_views([derived_view.introspect("derived")])
+        module = types.ModuleType("_generated_derived_model_under_test")
+        sys.modules[module.__name__] = module
+        try:
+            exec(compile(source, module.__name__, "exec"), module.__dict__)  # noqa: S102
+        finally:
+            sys.modules.pop(module.__name__, None)
+        model = module.__dict__["Derived"]
+
+        semolina.register("default", derived_view)
+        try:
+            cursor = (
+                model.query()
+                .metrics(model.double_revenue)
+                .dimensions(model.region)
+                .order_by(model.region)
+                .execute()
+            )
+            rows = [(row.region, row.double_revenue) for row in cursor.fetchall_rows()]
+            cursor.close()
+        finally:
+            semolina.unregister("default")
+        assert rows == [("CA", 400.0), ("US", 200.0)]
+
+
 class TestDuckDBIntrospectNamesTheViewItWasGiven:
     """
     ``introspect()`` describes the view its name names: schema and quoting included (FILT-05).
@@ -783,6 +852,22 @@ class TestDescribedMemberTypes:
         assert types == {"region": "VARCHAR", "amount": "PROBED_AMOUNT"}
         assert cursor.probes == [
             "DESCRIBE SELECT * FROM semantic_view('orders', facts := ['amount'])"
+        ]
+
+    def test_an_untyped_derived_metric_is_probed_as_a_metric(self) -> None:
+        """A ``DERIVED_METRIC`` the extension left untyped joins the metrics request."""
+        rows = _member("DIMENSION", "region", "VARCHAR") + [
+            ("DERIVED_METRIC", "revenue", "", "EXPRESSION", "a + b"),
+            ("DERIVED_METRIC", "revenue", "", "DATA_TYPE", ""),
+            ("DERIVED_METRIC", "revenue", "", "ACCESS_MODIFIER", "PUBLIC"),
+        ]
+        cursor = _ScriptedCursor(rows, version="v0.16.0", probe_types=self._PROBED)
+
+        types = _introspect_scripted(cursor)
+
+        assert types == {"region": "VARCHAR", "revenue": "PROBED_REVENUE"}
+        assert cursor.probes == [
+            "DESCRIBE SELECT * FROM semantic_view('orders', metrics := ['revenue'])"
         ]
 
     def test_an_untyped_quoted_dimension_is_probed_by_its_described_name(self) -> None:
