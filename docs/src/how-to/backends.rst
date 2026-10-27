@@ -617,7 +617,9 @@ Generate a model from a metric view
 :py:class:`~semolina.models.SemanticView` subclass. Measures become
 :py:class:`~semolina.fields.Metric` fields and dimensions become
 :py:class:`~semolina.fields.Dimension` fields. A column type with no clean Python
-equivalent is typed ``Any``, with a ``TODO`` comment for you to fill in. See
+equivalent is typed ``Any``, with a ``TODO`` comment for you to fill in. A column's
+comment, ``display_name``, ``synonyms`` and ``format`` (or its ``S_LAYER_*`` tags) become
+the field's metadata arguments, as :ref:`howto-models-metadata` lists. See
 :ref:`howto-codegen`.
 
 .. _howto-backends-duckdb:

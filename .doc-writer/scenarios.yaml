@@ -3,6 +3,8 @@ version: 1
 # 2026-09-05 set (how-to/query-by-name.rst, changelog/index.rst), so the reuse rule did not
 # apply. Each persona keeps one core-path scenario from the previous set and adds scenarios
 # for the 0.9.0 surface (query by name, time grains, field metadata, codegen --check).
+# Reused unchanged on 2026-10-27 for the 0.9.1 gate: no pages were added or removed, and
+# DE S3/S4 and WD S4 already exercise the 0.9.1 surface (Databricks formats, DuckDB 2.0).
 user_personas:
   - name: "Data engineers exposing semantic layers via APIs"
     skill_level: "intermediate"
