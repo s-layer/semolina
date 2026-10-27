@@ -446,7 +446,7 @@ strings except a bare string, which raises ``TypeError`` because it would read a
 synonym per character.
 
 ``semantic_format`` says what the values mean: a currency, a percentage, a date, an
-identifier. It takes an S-LAYER block, either as a mapping or as an ``SLayerBlock`` from
+identifier. It takes an S-LAYER block, either as a mapping or as a ``SemanticFormat`` from
 `s-layer-semantic-formats <https://pypi.org/project/s-layer-semantic-formats/>`_, and
 validates it when the class is defined. A block whose kind doesn't fit the field, such as
 a currency on a ``Dimension``, raises ``ValueError``. So does a block that carries its own
@@ -479,7 +479,7 @@ can serve them beside the data:
    }
 
 An argument you didn't pass reads as ``None``, or ``()`` for ``synonyms``. A
-``semantic_format`` comes back as an ``SLayerBlock``, which is a Pydantic model, so
+``semantic_format`` comes back as a ``SemanticFormat``, which is a Pydantic model, so
 ``model_dump()`` turns it into JSON-ready data with the defaults filled in.
 
 Where the warehouse holds them
@@ -532,9 +532,13 @@ format type gives the kind: ``number``, ``currency`` (with its ``currency_code``
 options give the display hints that have a slot: ``decimal_places`` of type ``exact`` or
 ``max``, ``abbreviation`` (``compact`` is ``compact: auto``), ``hide_group_separator`` and
 ``date_format``. ``decimal_places`` of type ``all``, ``scientific``, the ``year_week``
-date format, ``leading_zeros`` and ``time_format`` have no slot and aren't read. A numeric format on a dimension, or a date format on a measure, has no
-S-LAYER kind, so that column gets no ``semantic_format``. When a column has both, the tags
-win, because they hold more than ``format`` can (a ``count`` rather than a ``number``, say).
+date format, ``leading_zeros`` and ``time_format`` have no slot and aren't read. A numeric
+format on a dimension, a date format on a measure, or a format type Semolina doesn't know
+has no S-LAYER kind, so that column gets no ``semantic_format``. A format that has a kind
+but doesn't make a valid block, such as a ``currency`` with no ``currency_code``, makes
+introspection raise ``ValueError`` naming the member, as an invalid tag does. When a column
+has both, the tags win, because they hold more than ``format`` can (a ``count`` rather than
+a ``number``, say).
 
 On DuckDB the tags come from the ``TAGS`` row of ``DESCRIBE SEMANTIC VIEW``, which
 needs version 0.17.0 or later of the ``semantic_views`` extension. DuckDB matches

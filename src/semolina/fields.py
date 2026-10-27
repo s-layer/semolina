@@ -80,7 +80,7 @@ DATE_GRAINS = frozenset(GRAINS[: GRAINS.index("day") + 1])
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-    from s_layer_semantic_formats import MemberType, SLayerBlock
+    from s_layer_semantic_formats import MemberType, SemanticFormat
 
     from .filters import (
         Between,
@@ -191,7 +191,7 @@ class Field(Generic[T]):
         label: str | None = None,
         description: str | None = None,
         synonyms: Iterable[str] = (),
-        semantic_format: SLayerBlock | Mapping[str, Any] | None = None,
+        semantic_format: SemanticFormat | Mapping[str, Any] | None = None,
     ) -> None:
         """
         Initialize field descriptor.
@@ -213,7 +213,7 @@ class Field(Generic[T]):
             synonyms: Other names people use for the field, such as ``("sales",)``.
             semantic_format: What the values mean, as an S-LAYER block: a mapping such as
                 ``{"value": {"kind": "currency", "currency": "USD"}}``, or an
-                :class:`s_layer_semantic_formats.SLayerBlock`. Validated here, so a typo
+                :class:`s_layer_semantic_formats.SemanticFormat`. Validated here, so a typo
                 fails when the model is defined. The label and synonyms have their own
                 arguments and may not appear in the block.
 
@@ -234,7 +234,7 @@ class Field(Generic[T]):
                 f"Did you mean ({synonyms!r},)?"
             )
         self.synonyms: tuple[str, ...] = tuple(synonyms)
-        self.semantic_format: SLayerBlock | None = _semantic_format(
+        self.semantic_format: SemanticFormat | None = _semantic_format(
             semantic_format, self._member_type
         )
 
@@ -848,7 +848,7 @@ class Dimension(Field[T]):
         label: str | None = None,
         description: str | None = None,
         synonyms: Iterable[str] = (),
-        semantic_format: SLayerBlock | Mapping[str, Any] | None = None,
+        semantic_format: SemanticFormat | Mapping[str, Any] | None = None,
     ) -> None:
         """
         Initialize the dimension.
@@ -950,8 +950,8 @@ class Dimension(Field[T]):
 
 
 def _semantic_format(
-    value: SLayerBlock | Mapping[str, Any] | None, member_type: MemberType | None
-) -> SLayerBlock | None:
+    value: SemanticFormat | Mapping[str, Any] | None, member_type: MemberType | None
+) -> SemanticFormat | None:
     """
     Validate a field's ``semantic_format`` argument.
 

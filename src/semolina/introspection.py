@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from s_layer_semantic_formats import SLayerBlock
+    from s_layer_semantic_formats import SemanticFormat
 
 __all__ = ["IntrospectedField", "IntrospectedView"]
 
@@ -64,7 +64,7 @@ class IntrospectedField:
     raw_type: str | None = None
     label: str | None = None
     synonyms: tuple[str, ...] = ()
-    semantic_format: SLayerBlock | None = None
+    semantic_format: SemanticFormat | None = None
 
 
 @dataclass(frozen=True)

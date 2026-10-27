@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     import pyarrow
-    from s_layer_semantic_formats import SLayerBlock
+    from s_layer_semantic_formats import SemanticFormat
 
     from semolina.codegen.model_reader import CommittedField, CommittedModel
     from semolina.engines.base import Engine
@@ -412,14 +412,14 @@ def _metadata_drift(
     return "; ".join(reasons)
 
 
-def _format_text(block: SLayerBlock | None) -> str:
+def _format_text(block: SemanticFormat | None) -> str:
     """Write a block's normal form as compact JSON for a ``Detail`` line, or ``None``."""
     if block is None:
         return "None"
     return json.dumps(block.normal_form(), sort_keys=True, separators=(",", ":"))
 
 
-def _format_drift(committed: object, warehouse: SLayerBlock | None) -> str:
+def _format_drift(committed: object, warehouse: SemanticFormat | None) -> str:
     """
     Describe how a committed ``semantic_format=`` differs from the warehouse's block.
 

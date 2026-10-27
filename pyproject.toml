@@ -1,6 +1,6 @@
 [project]
 name = "semolina"
-version = "0.9.0"
+version = "0.9.1"
 description = "A Pythonic ORM for querying data warehouse semantic views (Snowflake, Databricks, DuckDB)"
 readme = "README.md"
 authors = [
@@ -9,7 +9,7 @@ authors = [
 requires-python = ">=3.11"
 dependencies = [
     "adbc-poolhouse>=1.7.0",
-    "s-layer-semantic-formats>=0.1.0",
+    "s-layer-semantic-formats>=0.2.0,<0.3",
 ]
 
 [project.scripts]

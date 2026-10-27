@@ -364,13 +364,20 @@ raises ``ValidationError`` where it is not:
      - converts
    * - ``decimal128``
      - ``int``
-     - ``ValidationError``
+     - converts a whole number, ``ValidationError`` for a fraction
    * - ``string``
      - ``int``
      - ``ValidationError`` unless the text parses
 
 The structural type check is skipped on this path, because Pydantic is
 already deciding and refusing first would block conversions that work.
+
+A ``decimal128`` with scale 0 only ever holds whole numbers, so it converts to
+``int`` row by row. On DuckDB that is a ``SUM`` over an integer column, which
+arrives as a 128-bit ``HUGEINT``: declare the field ``int`` and pass
+``validate=True``, or cast the sum to ``BIGINT`` in the view and keep the fast
+path. A ``decimal128`` with a fractional value raises ``ValidationError`` on the
+row that holds it.
 
 So: leave ``validate`` alone and Semolina holds you to the warehouse's
 types. Pass ``validate=True`` when you have deliberately declared
@@ -434,7 +441,7 @@ re-run:
      revenue (column 'revenue'): declared float, but the column is decimal128(38, 2) (arrives as decimal.Decimal)
      currency (column 'currency'): declared str, but the result has no such column (it carries ['revenue', 'country'])
    Annotate each field with the type its column arrives as, or use Field(validation_alias=...) if the result spells the column differently.
-   If a narrowing is deliberate, pass validate=True: Pydantic then converts each value, coercing where it legally can (decimal -> float) and raising ValidationError where it cannot (decimal -> int).
+   If a narrowing is deliberate, pass validate=True: Pydantic then converts each value, coercing where it legally can (decimal -> float) and raising ValidationError where it cannot (a fractional decimal -> int).
 
 The first mismatch is the type case. The second is a declared field the
 result has no column for, which is an error only while the field is

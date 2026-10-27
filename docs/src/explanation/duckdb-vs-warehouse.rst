@@ -81,11 +81,11 @@ declares ``revenue`` as an ``INTEGER`` and casts its sums to ``BIGINT``, so noth
 computed over it is ever a ``Decimal``, and serialization code written against those
 examples has never met the type it will meet against your warehouse. Drop the cast and
 DuckDB's own ``SUM`` over that column is a ``HUGEINT``, which arrives as a ``Decimal``
-too. The forgiving thing is the fixture, not the
-engine.
+too. The forgiving thing is the fixture, not the engine.
 
 So switching to Snowflake will not introduce this bug and staying on DuckDB will not
-protect you from it. What surfaces it is a decimal column, whichever backend holds one.
+protect you from it. What surfaces it is a value that arrives as a ``Decimal``: a decimal
+column on any backend, or a sum over an integer column on DuckDB or Snowflake.
 :ref:`explanation-type-fidelity` covers which columns arrive as a ``Decimal`` and why the
 warehouse rather than Semolina decides that;
 :ref:`the untyped route <howto-serialization>` covers the encoder to give
