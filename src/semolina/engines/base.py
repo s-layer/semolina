@@ -156,9 +156,10 @@ class Engine(_EngineBase, ABC):
     :class:`~semolina.introspection.IntrospectedField` attributes (``description``,
     ``label``, ``synonyms``, ``semantic_format``), with ``description`` covering the
     view's own comment too. ``semolina codegen --check`` compares a committed model's
-    metadata arguments against these alone, so a backend that has no slot for something is
-    not reported as having lost it. Empty by default, which a custom engine inherits until
-    it says what it reads.
+    metadata arguments against these alone, less the view's
+    :attr:`~semolina.introspection.IntrospectedView.unread_metadata`, so a backend that has
+    no slot for something is not reported as having lost it. Empty by default, which a
+    custom engine inherits until it says what it reads.
     """
 
     def __init__(self, *, pool: Any, dialect: SQLDialect, config: Any = None) -> None:

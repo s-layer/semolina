@@ -188,6 +188,11 @@ default, so declare what your ``introspect()`` fills:
            {"description", "synonyms"}
        )
 
+If your backend can hold some of that metadata on one view but not on another, set the
+names it couldn't read on that ``IntrospectedView``'s ``unread_metadata``.
+``--check`` leaves those out for that view only, so a ``label=`` written by hand isn't
+reported as drift where the warehouse has nowhere to keep it.
+
 Save that as ``my_engines.py`` and pass ``--backend my_engines.CatalogueEngine``. Codegen
 adds the working directory to the end of ``sys.path`` before importing it, so a module
 beside you resolves without being installed, and an installed package of the same name
@@ -614,9 +619,11 @@ Each moves the row to ``drift`` and prints a line under the table naming what mo
    Detail: country: column: committed 'OLD_NAME', warehouse 'NEW_NAME'
    Detail: revenue: synonyms: committed ('sales',), warehouse ('sales', 'turnover')
 
-Only what the backend records is compared (see :ref:`howto-models-metadata`). Semolina
-reads no label or format on DuckDB, so a ``label=`` or ``semantic_format=`` you added
-there is never drift. Formats compare by meaning rather than by spelling. Synonyms compare
+Only what the backend records is compared (see :ref:`howto-models-metadata`). On DuckDB,
+labels and formats are read from member tags, which need ``semantic_views`` 0.17.0 or
+later. Before 0.17.0 the extension can't store tags, so a ``label=`` or
+``semantic_format=`` you added there is never drift. From 0.17.0, one the view's tags
+don't hold is. Formats compare by meaning rather than by spelling. Synonyms compare
 as a set, so their order doesn't matter. The model's own ``description=`` is compared
 with the view's comment, and a difference prints as ``Detail: (view): description: ...``
 and makes the run exit ``5`` even when every row matches.
