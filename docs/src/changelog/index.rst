@@ -9,6 +9,13 @@ What changed in each Semolina release. The full history of earlier releases is o
 Unreleased
 ----------
 
+**s-layer-semantic-formats 0.2.0.** Semolina now requires ``s-layer-semantic-formats``
+0.2.0 or later, below 0.3. That release renames ``SLayerBlock`` to ``SemanticFormat``, so
+``semantic_format`` on a field is now typed and returned as a ``SemanticFormat``. If your
+own code imports ``SLayerBlock`` from ``s_layer_semantic_formats``, import
+``SemanticFormat`` instead. Semolina 0.9.0 does not cap that dependency, so a fresh install
+of 0.9.0 picks up 0.2.0 and fails to import; upgrade to this release instead.
+
 **Formats from a Databricks metric view's own YAML.** ``semolina codegen`` now reads the
 native ``format`` of a Databricks metric view's dimensions and measures into
 ``semantic_format=`` when the column has no ``S_LAYER_*`` tags, so a metric view written by
