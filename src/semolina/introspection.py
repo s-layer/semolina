@@ -84,9 +84,15 @@ class IntrospectedView:
             warehouse API. Includes metrics, dimensions, and facts.
         description: The view's own comment. Defaults to empty string if the warehouse
             provides none.
+        unread_metadata: Metadata the engine reads in general
+            (:attr:`~semolina.engines.base.Engine.introspected_metadata`) but could not read
+            for this view, because the warehouse it ran against has no slot for it: DuckDB
+            before ``semantic_views`` 0.17.0 stores no tags, so its labels and formats are
+            unread. ``semolina codegen --check`` does not compare these.
     """
 
     view_name: str
     class_name: str
     fields: list[IntrospectedField] = field(default_factory=list)
     description: str = ""
+    unread_metadata: frozenset[str] = frozenset()

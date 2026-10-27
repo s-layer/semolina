@@ -1276,9 +1276,24 @@ class TestMetadataIsComparedToo:
         assert row.status == STATUS_MATCH, row.detail
 
     def test_a_label_is_not_compared_where_the_backend_has_no_slot_for_one(
-        self, annotated_engine: Engine
+        self, annotated_engine: Engine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """DuckDB reports no labels, so a hand-written ``label=`` cannot have drifted."""
+        """
+        A view that cannot hold a label cannot have drifted from a hand-written ``label=``.
+
+        DuckDB reads labels from tags, which ``semantic_views`` stores from 0.17.0, so a view
+        on an earlier extension reports its labels unread.
+        """
+        import dataclasses
+
+        engine_type = type(annotated_engine)
+        introspect = engine_type.introspect
+
+        def untagged(self: Engine, view_name: str) -> IntrospectedView:
+            view = introspect(self, view_name)
+            return dataclasses.replace(view, unread_metadata=frozenset({"label"}))
+
+        monkeypatch.setattr(engine_type, "introspect", untagged)
         committed = committed_from_warehouse(annotated_engine, "annotated")
         labelled = self.with_metadata(
             committed, "country", label="Country", synonyms=("nation", "land")
@@ -1291,8 +1306,17 @@ class TestMetadataIsComparedToo:
     def test_a_label_is_compared_where_the_backend_reads_one(
         self, annotated_engine: Engine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        import dataclasses
+
+        engine_type = type(annotated_engine)
+        introspect = engine_type.introspect
+
+        def tagged(self: Engine, view_name: str) -> IntrospectedView:
+            return dataclasses.replace(introspect(self, view_name), unread_metadata=frozenset())
+
+        monkeypatch.setattr(engine_type, "introspect", tagged)
         monkeypatch.setattr(
-            type(annotated_engine),
+            engine_type,
             "introspected_metadata",
             frozenset({"description", "label", "synonyms"}),
         )
@@ -1333,7 +1357,7 @@ class TestMetadataIsComparedToo:
                 else f
                 for f in view.fields
             ]
-            return dataclasses.replace(view, fields=fields)
+            return dataclasses.replace(view, fields=fields, unread_metadata=frozenset())
 
         monkeypatch.setattr(engine_type, "introspect", tagged)
         monkeypatch.setattr(
@@ -1429,6 +1453,91 @@ class TestMetadataIsComparedToo:
 
         assert len(read.warnings) == 3, read.warnings
         assert report.has_drift is False, report
+
+
+class TestDuckDBTagsEndToEnd:
+    """
+    A DuckDB view's ``S_LAYER_*`` tags round-trip through codegen and ``--check``.
+
+    ``semantic_views`` stores member tags from 0.17.0, in the DDL dbt-s-layer writes:
+    ``WITH TAG (S_LAYER_KIND = ..., S_LAYER_LABEL = ..., S_LAYER_SPEC = ...)``.
+    """
+
+    @pytest.fixture
+    def tagged_engine(self) -> Generator[Engine]:
+        """A DuckDB engine with one view whose members carry ``S_LAYER_*`` tags."""
+        from adbc_poolhouse import DuckDBConfig
+
+        from semolina.config import create_engine
+
+        engine = create_engine(DuckDBConfig(database=":memory:", pool_size=1))
+        with engine.connect() as conn:
+            cur = conn.cursor()
+            load_semantic_views(cur)
+            cur.execute("CREATE TABLE sales_data (id INTEGER, country VARCHAR, amount DOUBLE)")
+            cur.execute(
+                """
+                CREATE SEMANTIC VIEW tagged AS
+                TABLES (s AS sales_data PRIMARY KEY (id))
+                DIMENSIONS (
+                    s.country AS s.country WITH TAG (S_LAYER_LABEL = 'Country'),
+                    s.plain AS s.country
+                )
+                METRICS (
+                    s.revenue AS SUM(s.amount) WITH TAG (
+                        S_LAYER_KIND = 'currency',
+                        S_LAYER_SPEC = '{"value":{"currency":"USD"}}',
+                        S_LAYER_LABEL = 'Revenue'
+                    ),
+                    doubled AS revenue * 2 WITH TAG (s_layer_kind = 'number')
+                )
+                """
+            )
+            cur.close()
+            conn.commit()
+        yield engine
+        engine.dispose()
+
+    def test_introspection_reads_the_tags(self, tagged_engine: Engine) -> None:
+        from s_layer_semantic_formats import from_compact_json
+
+        view = tagged_engine.introspect("tagged")
+
+        fields = {f.name: f for f in view.fields}
+        assert fields["country"].label == "Country"
+        assert fields["country"].semantic_format is None
+        assert fields["revenue"].label == "Revenue"
+        assert fields["revenue"].semantic_format == from_compact_json(
+            "currency", '{"value":{"currency":"USD"}}', member_type="metric"
+        )
+        doubled = fields["doubled"].semantic_format
+        assert doubled is not None
+        assert doubled.kind == "number"
+        assert fields["plain"].label is None
+        assert fields["plain"].semantic_format is None
+        assert view.unread_metadata == frozenset()
+
+    def test_a_freshly_generated_model_has_no_drift(self, tagged_engine: Engine) -> None:
+        committed = committed_from_warehouse(tagged_engine, "tagged")
+
+        assert committed.fields["revenue"].metadata["label"] == "Revenue"
+        assert "semantic_format" in committed.fields["revenue"].metadata
+        report = check_view(tagged_engine, "tagged", committed)
+        assert report.has_drift is False, report
+
+    def test_a_label_the_tags_do_not_hold_is_drift(self, tagged_engine: Engine) -> None:
+        """On 0.17.0 the view can hold a label, so a hand-added one is compared."""
+        import dataclasses
+
+        committed = committed_from_warehouse(tagged_engine, "tagged")
+        fields = dict(committed.fields)
+        fields["plain"] = dataclasses.replace(fields["plain"], metadata={"label": "Plain"})
+        labelled = dataclasses.replace(committed, fields=fields)
+
+        row = row_named(check_view(tagged_engine, "tagged", labelled), "plain")
+
+        assert row.status == STATUS_DRIFT
+        assert "label" in row.detail
 
 
 class TestSemanticFormatIsComparedByNormalForm:

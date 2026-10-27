@@ -906,7 +906,7 @@ class TestDescribedMemberTypes:
         build moves past v0.14.0. A shape the parser cannot read would silently send every
         introspection back to the probes.
         """
-        from semolina.engines.duckdb import _EXTENSION_VERSION, _reports_member_types
+        from semolina.engines.duckdb import _EXTENSION_VERSION, _extension_release
 
         with duckdb_engine.connect() as conn:
             cursor = conn.cursor()
@@ -915,12 +915,174 @@ class TestDescribedMemberTypes:
                 "WHERE extension_name = 'semantic_views'"
             )
             (version,) = cursor.fetchone()
-            reports = _reports_member_types(cursor)
+            read = _extension_release(cursor)
             cursor.close()
 
         assert _EXTENSION_VERSION.match(version), version
         release = tuple(int(part) for part in version.removeprefix("v").split(".")[:3])
-        assert reports is (release >= (0, 14, 0))
+        assert read == release
+
+
+def _tags(kind: str, name: str, tags: dict[str, object]) -> tuple[str, str, str, str, str]:
+    """The ``TAGS`` row ``DESCRIBE SEMANTIC VIEW`` reports for a member from v0.17.0."""
+    import json
+
+    return (kind, name, "o", "TAGS", json.dumps(tags))
+
+
+def _introspect_view(cursor: _ScriptedCursor) -> IntrospectedView:
+    """Introspect ``orders`` over ``cursor``."""
+    from semolina.engines.duckdb import _introspect_duckdb
+
+    return _introspect_duckdb(cursor, "orders", described="orders")
+
+
+class TestMemberTags:
+    """
+    A member's ``S_LAYER_*`` tags become its label and format, as on Snowflake.
+
+    ``semantic_views`` stores ``[WITH] TAG (...)`` on a member from v0.17.0 and reports the
+    tags in a ``TAGS`` row, a JSON object keyed by the tag name as the DDL spelled it.
+    """
+
+    _SPEC = '{"value":{"currency":"USD"}}'
+
+    def test_tags_become_the_label_and_the_format(self) -> None:
+        from s_layer_semantic_formats import from_compact_json
+
+        rows = [
+            *_member("DIMENSION", "region", "VARCHAR"),
+            _tags("DIMENSION", "region", {"S_LAYER_LABEL": "Sales region"}),
+            *_member("METRIC", "revenue", "DOUBLE"),
+            _tags(
+                "METRIC",
+                "revenue",
+                {"S_LAYER_KIND": "currency", "S_LAYER_SPEC": self._SPEC, "gov.pii": "none"},
+            ),
+            *_member("FACT", "amount", "DOUBLE"),
+        ]
+        view = _introspect_view(_ScriptedCursor(rows, version="v0.17.0", probe_types={}))
+
+        fields = {f.name: f for f in view.fields}
+        assert fields["region"].label == "Sales region"
+        assert fields["region"].semantic_format is None
+        assert fields["revenue"].label is None
+        assert fields["revenue"].semantic_format == from_compact_json("currency", self._SPEC)
+        assert fields["amount"].label is None
+        assert fields["amount"].semantic_format is None
+        assert view.unread_metadata == frozenset()
+
+    def test_a_derived_metric_reads_its_tags(self) -> None:
+        """A ``DERIVED_METRIC`` row's tags, with no parent table, are read like a metric's."""
+        rows = [
+            ("DERIVED_METRIC", "margin", "", "EXPRESSION", "revenue * 2"),
+            ("DERIVED_METRIC", "margin", "", "DATA_TYPE", "DOUBLE"),
+            ("DERIVED_METRIC", "margin", "", "TAGS", '{"S_LAYER_KIND":"number"}'),
+        ]
+        view = _introspect_view(_ScriptedCursor(rows, version="v0.17.0", probe_types={}))
+
+        (margin,) = view.fields
+        assert margin.field_type == "metric"
+        assert margin.semantic_format is not None
+        assert margin.semantic_format.kind == "number"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "S_LAYER_KIND",
+            "s_layer_kind",
+            '"S_Layer_Kind"',
+            "gov.S_LAYER_KIND",
+            'db.gov."s_layer_kind"',
+        ],
+    )
+    def test_a_tag_name_matches_whatever_its_case_quoting_or_schema(self, name: str) -> None:
+        """DuckDB matches identifiers case-insensitively, quoted or not."""
+        rows = [
+            *_member("METRIC", "revenue", "DOUBLE"),
+            _tags("METRIC", "revenue", {name: "number"}),
+        ]
+        view = _introspect_view(_ScriptedCursor(rows, version="v0.17.0", probe_types={}))
+
+        block = view.fields[0].semantic_format
+        assert block is not None
+        assert block.kind == "number"
+
+    @pytest.mark.parametrize(
+        ("name", "base"),
+        [
+            ("S_LAYER_KIND", "S_LAYER_KIND"),
+            ("gov.pii", "pii"),
+            ('db.gov."Owner Tag"', "Owner Tag"),
+            ('"a.b"', "a.b"),
+            ('db."x""y"', 'x"y'),
+            ('"s"."t"', "t"),
+        ],
+    )
+    def test_the_tag_base_name_is_the_last_unquoted_part(self, name: str, base: str) -> None:
+        from semolina.engines.duckdb import _tag_base_name
+
+        assert _tag_base_name(name) == base
+
+    @pytest.mark.parametrize(
+        ("tags_json", "message"),
+        [
+            ("not json", "not a JSON object"),
+            ('["S_LAYER_KIND"]', "not a JSON object"),
+            ('{"S_LAYER_LABEL": 3}', "not a string"),
+            ('{"S_LAYER_KIND": "number", "gov.S_LAYER_KIND": "number"}', "two S_LAYER_KIND"),
+            ('{"S_LAYER_SPEC": "{}"}', "no S_LAYER_KIND"),
+            ('{"S_LAYER_KIND": "category"}', "do not make a valid block"),
+        ],
+    )
+    def test_tags_that_cannot_be_read_are_an_error(self, tags_json: str, message: str) -> None:
+        """The tags say what the values mean, so one that cannot be read is not a gap."""
+        rows = [
+            *_member("METRIC", "revenue", "DOUBLE"),
+            ("METRIC", "revenue", "o", "TAGS", tags_json),
+        ]
+        cursor = _ScriptedCursor(rows, version="v0.17.0", probe_types={})
+
+        with pytest.raises(ValueError, match=message) as excinfo:
+            _introspect_view(cursor)
+        assert "'revenue'" in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        ("version", "tagged", "unread"),
+        [
+            ("v0.16.0", False, True),
+            ("v0.17.0", False, False),
+            ("v1.0.0", False, False),
+            ("4f2e1a9", False, True),
+            (None, False, True),
+            ("4f2e1a9", True, False),
+        ],
+    )
+    def test_labels_and_formats_are_unread_where_the_view_cannot_hold_tags(
+        self, version: str | None, tagged: bool, unread: bool
+    ) -> None:
+        """
+        Before v0.17.0 a member has no tags, so ``--check`` does not compare its label.
+
+        A ``TAGS`` row proves the extension stores them, whatever a local build's version
+        says.
+        """
+        rows = _member("METRIC", "revenue", "DOUBLE")
+        if tagged:
+            rows.append(_tags("METRIC", "revenue", {"other": "x"}))
+        view = _introspect_view(
+            _ScriptedCursor(rows, version=version, probe_types={"revenue": "DOUBLE"})
+        )
+
+        expected = frozenset({"label", "semantic_format"}) if unread else frozenset()
+        assert view.unread_metadata == expected
+
+    def test_the_engine_reads_labels_and_formats(self) -> None:
+        from semolina.engines.duckdb import DuckDBEngine
+
+        assert DuckDBEngine.introspected_metadata == frozenset(
+            {"description", "label", "synonyms", "semantic_format"}
+        )
 
 
 class TestSqlStrLiteral:

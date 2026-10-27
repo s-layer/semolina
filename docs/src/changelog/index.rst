@@ -6,6 +6,18 @@ Changelog
 What changed in each Semolina release. The full history of earlier releases is on the
 `GitHub releases page <https://github.com/s-layer/semolina/releases>`_.
 
+Unreleased
+----------
+
+**Labels and formats from DuckDB tags.** ``semolina codegen`` now reads a DuckDB
+semantic view member's ``S_LAYER_LABEL``, ``S_LAYER_KIND`` and ``S_LAYER_SPEC`` tags into
+``label=`` and ``semantic_format=``, as it does on Snowflake, so a view dbt-s-layer
+writes with tags gets them. The tags need version 0.17.0 or later of the
+``semantic_views`` extension; on an earlier one ``codegen --check`` doesn't compare a
+``label=`` or ``semantic_format=`` you added by hand. On 0.17.0 or later it does, so a
+hand-added one that the view's tags don't hold is reported as drift: move it into the
+view's tags, or drop it. See :ref:`howto-models-metadata`.
+
 0.9.1 (2026-10-27)
 ------------------
 
