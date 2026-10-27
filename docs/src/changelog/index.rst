@@ -6,8 +6,8 @@ Changelog
 What changed in each Semolina release. The full history of earlier releases is on the
 `GitHub releases page <https://github.com/s-layer/semolina/releases>`_.
 
-Unreleased
-----------
+0.9.1 (2026-10-27)
+------------------
 
 **s-layer-semantic-formats 0.2.0.** Semolina now requires ``s-layer-semantic-formats``
 0.2.0 or later, below 0.3. That release renames ``SLayerBlock`` to ``SemanticFormat``, so
