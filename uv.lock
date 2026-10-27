@@ -2074,14 +2074,14 @@ wheels = [
 
 [[package]]
 name = "s-layer-semantic-formats"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/56/c6/dabe499e1702fb358f0fcf349511fd50f21235df8251b9a9fca68f04c4a5/s_layer_semantic_formats-0.1.0.tar.gz", hash = "sha256:1c4acd38927bde2d9e069e58517bf2c4dd6d4412645e9c17b3cfd06a729cafb0", size = 20286, upload-time = "2026-10-26T12:45:36.981Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a9/e4/2aeb547f5c98033334555cf05ef36612a9fa34d8e394099f548bf4e1545d/s_layer_semantic_formats-0.2.0.tar.gz", hash = "sha256:663368d1b94f6b53e851e7d869be9ff4224c92459c27b4c3920c7dd5afc27e2a", size = 20318, upload-time = "2026-10-27T08:34:05.195Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fb/20/5c8f10fa80305266860fa67c9f73b3e26d2f7fca66c937f27c3ab82922f6/s_layer_semantic_formats-0.1.0-py3-none-any.whl", hash = "sha256:976beb9d06f1924bd58d10969ab5add72f2906e08b2049c1bf3191f3858b8e1f", size = 23066, upload-time = "2026-10-26T12:45:35.613Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/ad/dd726b0ccc7030e8a7ea8b8161e0cb8d5cbd053f5e13be98c66ae1a9f38e/s_layer_semantic_formats-0.2.0-py3-none-any.whl", hash = "sha256:ca546e99300d587dce9c00f64d226f7a4d0eaa92f8c7792dd4eaf48d61b44ebc", size = 23077, upload-time = "2026-10-27T08:34:04.069Z" },
 ]
 
 [[package]]
@@ -2205,7 +2205,7 @@ requires-dist = [
     { name = "pyarrow", marker = "extra == 'pyarrow'", specifier = ">=17.0.0" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0.0" },
     { name = "ruff", marker = "extra == 'codegen-lint'", specifier = ">=0.15.1" },
-    { name = "s-layer-semantic-formats", specifier = ">=0.1.0" },
+    { name = "s-layer-semantic-formats", specifier = ">=0.2.0,<0.3" },
     { name = "semolina", extras = ["cli"], marker = "extra == 'codegen-lint'", editable = "." },
     { name = "semolina", extras = ["cli", "snowflake", "databricks", "duckdb", "async", "pyarrow", "pandas", "polars", "arrowmodel"], marker = "extra == 'all'", editable = "." },
     { name = "semolina", extras = ["pyarrow"], marker = "extra == 'arrowmodel'", editable = "." },

@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pyarrow
-    from s_layer_semantic_formats import SLayerBlock
+    from s_layer_semantic_formats import SemanticFormat
 
 pytest.importorskip("adbc_driver_duckdb")
 
@@ -1437,7 +1437,7 @@ class TestSemanticFormatIsComparedByNormalForm:
     WAREHOUSE_SPEC = '{"value":{"currency":"USD"}}'
 
     @staticmethod
-    def drift(committed: Mapping[str, object], warehouse: SLayerBlock | None) -> str:
+    def drift(committed: Mapping[str, object], warehouse: SemanticFormat | None) -> str:
         from semolina.codegen.annotation_check import _metadata_drift
 
         field = IntrospectedField("revenue", "metric", "int", semantic_format=warehouse)
@@ -1450,7 +1450,7 @@ class TestSemanticFormatIsComparedByNormalForm:
         )
         return _metadata_drift(frozenset({"semantic_format"}), field, committed_field)
 
-    def warehouse(self) -> SLayerBlock:
+    def warehouse(self) -> SemanticFormat:
         from s_layer_semantic_formats import from_compact_json
 
         return from_compact_json("currency", self.WAREHOUSE_SPEC)
