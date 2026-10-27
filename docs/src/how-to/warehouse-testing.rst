@@ -110,6 +110,11 @@ metric, so ``US`` returns ``1500`` (``1000 + 500``):
 
        assert rows == {"US": 1500, "CA": 2000}
 
+The values are ``decimal.Decimal``, not ``int``: DuckDB types a ``SUM`` over an
+``INTEGER`` column as a 128-bit ``HUGEINT``. ``Decimal(1500) == 1500`` holds, so the
+assertion reads naturally. Cast the sum to ``BIGINT`` in the view if the code under test
+expects an ``int``, as :ref:`tutorial-testing-queries` does.
+
 Because the SQL runs, ``.where()`` filters return only matching rows:
 
 .. code-block:: python
