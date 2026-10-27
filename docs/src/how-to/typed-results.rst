@@ -441,7 +441,7 @@ re-run:
      revenue (column 'revenue'): declared float, but the column is decimal128(38, 2) (arrives as decimal.Decimal)
      currency (column 'currency'): declared str, but the result has no such column (it carries ['revenue', 'country'])
    Annotate each field with the type its column arrives as, or use Field(validation_alias=...) if the result spells the column differently.
-   If a narrowing is deliberate, pass validate=True: Pydantic then converts each value, coercing where it legally can (decimal -> float) and raising ValidationError where it cannot (decimal -> int).
+   If a narrowing is deliberate, pass validate=True: Pydantic then converts each value, coercing where it legally can (decimal -> float) and raising ValidationError where it cannot (a fractional decimal -> int).
 
 The first mismatch is the type case. The second is a declared field the
 result has no column for, which is an error only while the field is

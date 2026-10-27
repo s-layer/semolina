@@ -417,9 +417,9 @@ class SemolinaCursor(_CursorBase):
         - ``validate=True`` — **types are coerced.** Pydantic's full pipeline runs per row at
           roughly 2-5x the cost, converting where it legally can (``decimal128`` into a
           ``float`` field, ``int64`` into ``float``) and raising ``ValidationError`` where it
-          cannot (``decimal128`` into ``int``). The structural type comparison is skipped,
-          because Pydantic owns the decision and refusing first would block narrowings that
-          work.
+          cannot (a fractional ``decimal128`` into ``int``). The structural type comparison
+          is skipped, because Pydantic owns the decision and refusing first would block
+          narrowings that work.
 
         Column *presence* is checked on both settings — a required field with no matching
         column is an error either way, since no amount of coercion invents a column.

@@ -657,6 +657,6 @@ def _render_report(model: type[BaseModel], mismatches: list[FieldMismatch]) -> s
         lines.append(
             "If a narrowing is deliberate, pass validate=True: Pydantic then converts each "
             "value, coercing where it legally can (decimal -> float) and raising "
-            "ValidationError where it cannot (decimal -> int)."
+            "ValidationError where it cannot (a fractional decimal -> int)."
         )
     return "\n".join(lines)
