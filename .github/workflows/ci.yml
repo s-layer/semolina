@@ -181,7 +181,7 @@ jobs:
       - name: Post coverage comment
         if: github.event_name == 'pull_request' && matrix.python-version == '3.11'
         continue-on-error: true
-        uses: MishaKav/pytest-coverage-comment@v1.12.3
+        uses: MishaKav/pytest-coverage-comment@v1.13.0
         with:
           pytest-xml-coverage-path: coverage.xml
           github-token: ${{ secrets.GITHUB_TOKEN }}
