@@ -111,8 +111,8 @@ jobs:
     strategy:
       matrix:
         # uv.lock carries a distinct resolution marker per minor, so 3.12 and 3.13 resolve
-        # dependency graphs that 3.11 and 3.14 never exercise (REL-08).
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        # dependency graphs that 3.11, 3.14 and 3.15 never exercise (REL-08).
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
       fail-fast: false
 
     # No warehouse credentials: integration tests replay from committed ADBC
