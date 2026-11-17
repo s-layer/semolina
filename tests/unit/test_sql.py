@@ -1913,14 +1913,18 @@ class TestDuckDBSQLBuilder:
         assert params == []
 
     def test_facts_and_dimensions_query(self):
-        """Dimensions + facts are projected in the order they were selected."""
+        """
+        Dimensions + facts are all requested as dimensions, projected in selection order.
+
+        ``semantic_views`` 0.18.0 refuses ``facts`` beside ``dimensions`` in one call. A fact
+        listed in ``dimensions`` is grouped on, matching the other dialects' ``GROUP BY ALL``.
+        """
         query = Sales.query().dimensions(Sales.country, Sales.unit_price)
         builder = DuckDBSQLBuilder(DuckDBDialect())
         sql, params = builder.build_select_with_params(query)
         assert sql == (
-            'SELECT DISTINCT "country" AS "country", "unit_price" AS "unit_price"\n'
-            "FROM semantic_view('sales_view', "
-            "dimensions := ['country'], facts := ['unit_price'])"
+            'SELECT "country" AS "country", "unit_price" AS "unit_price"\n'
+            "FROM semantic_view('sales_view', dimensions := ['country', 'unit_price'])"
         )
         assert params == []
 
