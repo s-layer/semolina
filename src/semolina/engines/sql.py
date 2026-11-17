@@ -2098,6 +2098,14 @@ class DuckDBSQLBuilder(SQLBuilder):
             view_name = owner._view_name
         assert view_name is not None, "View name not found on field owner"
 
+        # Since semantic_views 0.18.0 a call may not list both `facts` and `dimensions`
+        # (Snowflake's 2026_07 rule). A fact listed in `dimensions` is grouped on, which is
+        # what GROUP BY ALL does on the other dialects, so a query selecting both asks for
+        # them all as dimensions. A fact-only query keeps `facts` and the DISTINCT below.
+        if fact_names and dim_names:
+            dim_names.extend(fact_names)
+            fact_names = []
+
         # Build semantic_view() arguments
         # Every name below is interpolated into a SQL string literal, so every one of them
         # goes through `sql_str_literal`. A field's name can reach here from the warehouse
