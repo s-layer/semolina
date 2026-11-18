@@ -9,6 +9,7 @@ check runs pytest's collection in a child interpreter that blocks ``duckdb`` thr
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -41,6 +42,8 @@ def test_collection_without_duckdb_loads_the_conftest() -> None:
         text=True,
         check=False,
         cwd=TESTS.parent,
+        # The skips are the expected outcome here, so the CI skip check must not fail them.
+        env={k: v for k, v in os.environ.items() if k != "CI"},
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "test_cli_packaging.py" in result.stdout

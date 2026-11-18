@@ -358,7 +358,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Users.country == 'US'  # doctest: +SKIP
+                >>> Users.country == 'US'
                 Exact(field_name='country', value='US')
         """
         name = self._filter_name()
@@ -384,7 +384,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Users.country != 'US'  # doctest: +SKIP
+                >>> Users.country != 'US'
                 NotEqual(field_name='country', value='US')
         """
         name = self._filter_name()
@@ -409,7 +409,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Users.age < 30  # doctest: +SKIP
+                >>> Users.age < 30
                 Lt(field_name='age', value=30)
         """
         name = self._filter_name()
@@ -434,7 +434,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Users.age <= 30  # doctest: +SKIP
+                >>> Users.age <= 30
                 Lte(field_name='age', value=30)
         """
         name = self._filter_name()
@@ -459,7 +459,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Users.revenue > 1000  # doctest: +SKIP
+                >>> Users.revenue > 1000
                 Gt(field_name='revenue', value=1000)
         """
         name = self._filter_name()
@@ -484,7 +484,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Users.revenue >= 1000  # doctest: +SKIP
+                >>> Users.revenue >= 1000
                 Gte(field_name='revenue', value=1000)
         """
         name = self._filter_name()
@@ -516,7 +516,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Sales.revenue.between(100, 1000)  # doctest: +SKIP
+                >>> Sales.revenue.between(100, 1000)
                 Between(field_name='revenue', value=(100, 1000))
         """
         name = self._filter_name()
@@ -544,7 +544,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Sales.country.in_(['US', 'CA', 'UK'])  # doctest: +SKIP
+                >>> Sales.country.in_(['US', 'CA', 'UK'])
                 In(field_name='country', value=('US', 'CA', 'UK'))
         """
         name = self._filter_name()
@@ -565,7 +565,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Users.name.like('%Smith%')  # doctest: +SKIP
+                >>> Users.name.like('%Smith%')
                 Like(field_name='name', value='%Smith%')
         """
         name = self._filter_name()
@@ -586,7 +586,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Users.name.ilike('%smith%')  # doctest: +SKIP
+                >>> Users.name.ilike('%smith%')
                 ILike(field_name='name', value='%smith%')
         """
         name = self._filter_name()
@@ -613,7 +613,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Users.name.startswith('A')  # doctest: +SKIP
+                >>> Users.name.startswith('A')
                 StartsWith(field_name='name', value='A')
         """
         name = self._filter_name()
@@ -640,7 +640,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Users.name.istartswith('a')  # doctest: +SKIP
+                >>> Users.name.istartswith('a')
                 IStartsWith(field_name='name', value='a')
         """
         name = self._filter_name()
@@ -667,7 +667,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Users.name.endswith('son')  # doctest: +SKIP
+                >>> Users.name.endswith('son')
                 EndsWith(field_name='name', value='son')
         """
         name = self._filter_name()
@@ -694,7 +694,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Users.name.iendswith('SON')  # doctest: +SKIP
+                >>> Users.name.iendswith('SON')
                 IEndsWith(field_name='name', value='SON')
         """
         name = self._filter_name()
@@ -721,7 +721,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Users.country.iexact('united states')  # doctest: +SKIP
+                >>> Users.country.iexact('united states')
                 IExact(field_name='country', value='united states')
         """
         name = self._filter_name()
@@ -739,7 +739,7 @@ class Field(Generic[T]):
         Example:
             .. code-block:: pycon
 
-                >>> Users.country.isnull()  # doctest: +SKIP
+                >>> Users.country.isnull()
                 IsNull(field_name='country', value=True)
         """
         name = self._filter_name()
@@ -769,7 +769,7 @@ class Field(Generic[T]):
             .. code-block:: pycon
 
                 >>> from semolina.filters import Exact
-                >>> Users.country.lookup(Exact, 'US')  # doctest: +SKIP
+                >>> Users.country.lookup(Exact, 'US')
                 Exact(field_name='country', value='US')
         """
         name = self._filter_name()

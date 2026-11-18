@@ -39,6 +39,19 @@ class Sales(SemanticView, view="sales_view"):
     unit_price = Fact()
 
 
+class Users(SemanticView, view="users_view"):
+    """
+    Sample SemanticView for the filter examples in ``fields.py``.
+
+    The examples only build predicates, so ``users_view`` is never queried.
+    """
+
+    name = Dimension()
+    country = Dimension()
+    age = Dimension()
+    revenue = Metric()
+
+
 def _setup_doctest_data(dbapi_conn: Any, _connection_record: Any) -> None:
     """
     Create sales_data table and sales_view semantic view for doctests.
@@ -96,6 +109,7 @@ def doctest_setup(doctest_namespace: dict[str, object]) -> Generator[None, None,
 
     Provides:
         Sales: SemanticView with revenue, cost, country, region, unit_price
+        Users: SemanticView with name, country, age, revenue (filter examples only)
         semolina: The semolina module (for register/unregister examples)
         Predicate: The Predicate filter base class
         SemanticView: Base class for defining semantic views
@@ -119,6 +133,7 @@ def doctest_setup(doctest_namespace: dict[str, object]) -> Generator[None, None,
     register("default", engine)
 
     doctest_namespace["Sales"] = Sales
+    doctest_namespace["Users"] = Users
     doctest_namespace["Predicate"] = Predicate
     doctest_namespace["semolina"] = semolina
     doctest_namespace["SemanticView"] = SemanticView
