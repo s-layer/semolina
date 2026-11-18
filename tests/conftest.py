@@ -319,3 +319,7 @@ def async_duckdb_file_engine(duckdb_file_backed_db: Path) -> Generator[Any, None
 
     yield engine
     close_pool(engine._pool._pool)
+
+
+# Under CI, a skipped test fails the run (tests/ci_skips.py).
+pytest_plugins = ["ci_skips"]
