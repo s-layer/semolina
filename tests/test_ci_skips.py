@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
-
 import ci_skips
+import pytest
 
 pytest_plugins = ["pytester"]
 
