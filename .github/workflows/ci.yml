@@ -198,10 +198,13 @@ jobs:
       # No marker filter: `-m duckdb` skipped the three model-translation tests in
       # src/semolina_jaffle_shop/, so they ran under `just test` and never in CI. Keep
       # this in step with the `test` recipe in the justfile (REL-05).
+      # -p ci_skips: a skip fails this suite under CI too (tests/ci_skips.py).
       - name: Test semolina-jaffle-shop
+        env:
+          PYTHONPATH: ${{ github.workspace }}/tests
         run: |
           cd semolina-jaffle-shop
-          uv run pytest
+          uv run pytest -p ci_skips
 
       - name: Prune cache
         if: always()

@@ -27,7 +27,7 @@ test:
     uv sync --locked --dev --extra all
     uv run pytest -n auto -m "not timing"
     uv run pytest -m timing
-    cd semolina-jaffle-shop && uv run pytest
+    cd semolina-jaffle-shop && PYTHONPATH=../tests uv run pytest -p ci_skips
 
 # Regenerate the committed type-fidelity comparison artifact
 type-fidelity:
