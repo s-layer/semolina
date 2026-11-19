@@ -53,6 +53,27 @@ does need a live warehouse and is a local, credentialed step:
 uv run pytest --adbc-record=once tests/integration
 ```
 
+### Re-record schedule
+
+Replay proves semolina still sends the SQL it sent when the cassettes were recorded. It
+cannot show that Snowflake or Databricks still answer that SQL the same way, so the cassettes
+go stale as the warehouses change, without any test failing. Re-record them:
+
+- **once a month**, in the first week. The Snowflake account is a 30-day trial that is
+  recreated each month, so do it right after the new account is set up;
+- **before each release**, if the last recording is more than a month old;
+- **whenever the generated SQL changes**, for the tests whose SQL changed (replay fails on
+  those anyway, since the keys no longer match).
+
+Record with `--adbc-record=all` (see `tests/integration/cassettes/README.md`), then read the
+diff of the result files before committing. A changed result for unchanged SQL is warehouse
+drift: find out why before accepting it. Update the dates below in the same commit.
+
+| Warehouse | Last recorded | Note |
+|---|---|---|
+| Snowflake | 2026-10-26 | Trial ended; re-record when the next trial account is set up |
+| Databricks | 2026-10-26 | Free Edition workspace; can be re-recorded at any time |
+
 The jaffle-shop workspace member runs against DuckDB only (its Snowflake tests were removed in
 favour of the recorded cassettes above), so CI runs that suite unfiltered.
 
@@ -60,7 +81,9 @@ favour of the recorded cassettes above), so CI runs that suite unfiltered.
 
 Version is static in `pyproject.toml`; the tag must agree with it.
 
-1. Bump `project.version` in `pyproject.toml`, and land it on `main` with CI green.
+1. Bump `project.version` in `pyproject.toml`, and land it on `main` with CI green. If the
+   cassettes were last recorded more than a month ago, re-record them first (see
+   [Re-record schedule](#re-record-schedule)).
 2. Tag the release commit and push the tag:
 
    ```sh
