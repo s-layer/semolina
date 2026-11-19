@@ -27,9 +27,11 @@ uv run pytest --adbc-record=all tests/integration
 uv run pytest --adbc-record=new_episodes tests/integration
 ```
 
-Then commit the updated cassette files. Cassettes are matched by normalized SQL,
-so they only need re-recording when the **generated SQL** changes (new/changed
-query) or the **expected data** changes.
+Then read the diff of the result files and commit them. Cassettes are matched by
+normalized SQL, so replay only needs new ones when the **generated SQL** changes (new or
+changed query) or the **expected data** changes. They are also re-recorded on a schedule,
+because replay cannot notice the warehouse answering differently: MAINTAINER.md's
+"Re-record schedule" says when, and holds the date of the last recording per warehouse.
 
 Do not edit cassette files by hand. The one exception is the `.sql` key files: when a
 pytest-adbc-replay upgrade changes how SQL is normalised (as 1.2.0 did for Snowflake
