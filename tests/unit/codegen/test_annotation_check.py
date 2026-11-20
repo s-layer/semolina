@@ -77,8 +77,7 @@ def sales_engine(duckdb_file_backed_db: Path) -> Generator[Engine]:
     """
     Yield an engine on the file-backed ``sales_view``, which carries facts AND metrics.
 
-    That combination is what ``DuckDBSQLBuilder.build_select_with_params`` refuses in one
-    query, so this fixture is the one that exercises the two-probe merge.
+    That combination is the one ``--check`` must select in a single DuckDB query.
     """
     from adbc_poolhouse import DuckDBConfig
 
@@ -522,78 +521,69 @@ class TestTheRoleAndTheColumnAreComparedToo:
         assert {r.detail for r in report.rows} == {""}
 
 
-class TestFactsAndMetricsAreTwoProbes:
-    """``sales_view`` carries a fact and two metrics, which one query cannot select."""
+class TestFactsAndMetricsAreOneProbe:
+    """
+    ``sales_view`` carries a fact and two metrics, and one query selects them all.
 
-    def test_the_builder_still_refuses_the_combined_query(self, sales_engine: Engine) -> None:
-        """
-        The reason two probes exist, asserted rather than assumed.
+    Semolina 0.10.0 needs ``semantic_views`` 0.18.0, which groups a metric by a fact listed
+    under ``dimensions``. Before that the builder refused facts beside metrics, and
+    ``--check`` sent a second query for the facts.
+    """
 
-        If this ever stops raising, the two-probe split becomes dead weight and should be
-        revisited — so the guard fails loudly instead of silently over-engineering.
-        """
-        from semolina.codegen.annotation_check import (
-            _canonical_model,
-        )
+    def test_check_view_probes_every_field_in_one_query(
+        self, sales_engine: Engine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from semolina.codegen.probe import ProbeResult
+        from semolina.codegen.probe import probe_schema as real_probe_schema
 
-        view = sales_engine.introspect("sales_view")
-        model = _canonical_model(view)
-        builder = sales_engine.dialect.create_builder()
-        query = (
-            model.query()
-            .metrics(*(getattr(model, f.name) for f in view.fields if f.field_type == "metric"))
-            .dimensions(*(getattr(model, f.name) for f in view.fields if f.field_type != "metric"))
-        )
+        sent: list[str] = []
 
-        with pytest.raises(ValueError, match="facts and metrics"):
-            builder.build_select_with_params(query)
+        def recording(cursor: Any, sql: str, params: list[Any]) -> ProbeResult:
+            sent.append(sql)
+            return real_probe_schema(cursor, sql, params)
 
-    def test_check_view_completes_and_probes_both_groups(self, sales_engine: Engine) -> None:
+        monkeypatch.setattr("semolina.codegen.annotation_check.probe_schema", recording)
         committed = committed_from_warehouse(sales_engine, "sales_view")
 
         report = check_view(sales_engine, "sales_view", committed)
 
+        assert len(sent) == 1, sent
+        assert "unit_price" in sent[0]
+        assert "metrics := [" in sent[0]
         assert report.has_drift is False, [
             (r.name, r.committed, r.probed) for r in report.rows if r.status == STATUS_DRIFT
         ]
-        # The fact comes from the second probe, the metrics from the first.
+        # The fact and the metrics come from the same probe.
         assert row_named(report, "unit_price").probed == "int"
         # SUM over an INTEGER column is a HUGEINT, which arrives as decimal128(38, 0).
         assert row_named(report, "revenue").probed == "decimal.Decimal | None"
         assert {r.route for r in report.rows} == {ROUTE_EXECUTE_SCHEMA}
 
-    def test_each_group_reports_the_route_that_answered_it(
+    def test_every_probed_row_reports_the_route_that_answered_it(
         self, sales_engine: Engine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """
-        The route labels the row, not the last query the loop happened to run.
+        The route labels each row from the probe, not a constant.
 
-        DuckDB needs two probes for this view, and a driver is free to answer one and refuse
-        the other — which is exactly the Snowflake shape, where a parameter-free query gets
-        ``ExecuteSchema`` and a parameterized one does not. A single carried-forward route
-        makes the report claim something about a query that never touched the row.
+        A driver may answer with the zero-row fallback rather than ``ExecuteSchema`` (the
+        Snowflake shape for a parameterized query). Every row the probe answered, the fact
+        included, must say so.
         """
         from semolina.codegen.probe import ROUTE_ZERO_ROW, ProbeResult
         from semolina.codegen.probe import probe_schema as real_probe_schema
 
-        calls = {"n": 0}
-
-        def alternating(cursor: Any, sql: str, params: list[Any]) -> ProbeResult:
+        def relabelled(cursor: Any, sql: str, params: list[Any]) -> ProbeResult:
             probed = real_probe_schema(cursor, sql, params)
-            calls["n"] += 1
-            # First group answered honestly; second group relabelled as the fallback route.
-            route = ROUTE_EXECUTE_SCHEMA if calls["n"] == 1 else ROUTE_ZERO_ROW
-            return ProbeResult(schema=probed.schema, route=route)
+            return ProbeResult(schema=probed.schema, route=ROUTE_ZERO_ROW)
 
-        monkeypatch.setattr("semolina.codegen.annotation_check.probe_schema", alternating)
+        monkeypatch.setattr("semolina.codegen.annotation_check.probe_schema", relabelled)
         committed = committed_from_warehouse(sales_engine, "sales_view")
 
         report = check_view(sales_engine, "sales_view", committed)
 
-        assert calls["n"] == 2, "fixture assumption: this view needs two probes"
-        # The metrics came from the first probe and the fact from the second.
-        assert row_named(report, "revenue").route == ROUTE_EXECUTE_SCHEMA
+        assert row_named(report, "revenue").route == ROUTE_ZERO_ROW
         assert row_named(report, "unit_price").route == ROUTE_ZERO_ROW
+        assert {r.route for r in report.rows} == {ROUTE_ZERO_ROW}
 
 
 class TestADuplicateColumnNameIsNotAnAbsentOne:

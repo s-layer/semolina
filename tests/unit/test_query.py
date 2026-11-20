@@ -203,35 +203,41 @@ class TestSelectingDimensions:
         rows with the same fact value come back as one. DuckDB's ``semantic_view()`` returns
         facts row by row, so the same query must not keep the duplicate there either.
         """
-        pytest.importorskip("adbc_driver_duckdb")
-        from adbc_poolhouse import DuckDBConfig, close_pool
-        from sqlalchemy import event
+        assert sorted(_rows_on_duckdb(build())) == expected
 
-        from semolina.config import create_engine
+    @pytest.mark.parametrize(
+        ("build", "expected"),
+        [
+            (
+                lambda: Sales.query().metrics(Sales.revenue).dimensions(Sales.unit_price),
+                [(1, 5), (1, 20), (2, 10)],
+            ),
+            (
+                lambda: (
+                    Sales.query().metrics(Sales.revenue).dimensions(Sales.country, Sales.unit_price)
+                ),
+                [(1, "CA", 20), (1, "US", 5), (2, "US", 10)],
+            ),
+            (
+                lambda: Sales.query().dimensions(Sales.unit_price).where(Sales.revenue > 1),
+                [(10,)],
+            ),
+        ],
+        ids=["fact-and-metric", "dimension-fact-and-metric", "metric-filter-on-a-fact"],
+    )
+    def test_a_fact_groups_a_metric_on_duckdb_as_on_the_warehouses(
+        self, build: Callable[[], Any], expected: list[tuple[object, ...]]
+    ):
+        """
+        A fact selected beside a metric is a grouping column on DuckDB too.
 
-        engine = create_engine(DuckDBConfig(database=":memory:", pool_size=1))
-
-        def _setup(dbapi_conn: Any, _record: Any) -> None:
-            cur = dbapi_conn.cursor()
-            cur.execute("CREATE TABLE sales_data (id INTEGER, country VARCHAR, unit_price INTEGER)")
-            cur.execute(
-                "INSERT INTO sales_data VALUES (1, 'US', 10), (2, 'CA', 20), (3, 'US', 5),"
-                " (4, 'US', 10)"
-            )
-            cur.execute(
-                "CREATE SEMANTIC VIEW sales_view AS TABLES (s AS sales_data PRIMARY KEY (id))"
-                " FACTS (s.unit_price AS unit_price) DIMENSIONS (s.country AS country)"
-                " METRICS (s.revenue AS COUNT(*))"
-            )
-            cur.close()
-            dbapi_conn.commit()
-
-        event.listen(engine._pool, "connect", _setup, once=True)
-        try:
-            rows = engine.execute(build()).fetchall()
-        finally:
-            close_pool(engine._pool)
-        assert sorted(rows) == expected
+        Snowflake and Databricks group the metric by every selected fact and dimension
+        (``GROUP BY ALL``). Since ``semantic_views`` 0.18.0 the extension does the same for a
+        fact listed under ``dimensions``, so the metric is counted per fact value: the two
+        ``US`` rows priced 10 count as 2. A metric filter on a fact query asks for the metric
+        without projecting it, and keeps only the fact values whose group passes.
+        """
+        assert sorted(_rows_on_duckdb(build())) == expected
 
     def test_dimensions_accumulates(self):
         """Two ``.dimensions()`` calls accumulate: the result equals one call with both."""
@@ -1183,3 +1189,40 @@ class TestToSqlDefaultsToTheUsingEnginesDialect:
         q = Sales.query().metrics(Sales.revenue)
 
         assert q.to_sql() == q.to_sql(Dialect.SNOWFLAKE)
+
+
+def _rows_on_duckdb(query: Any) -> list[tuple[object, ...]]:
+    """
+    Run *query* on an in-memory DuckDB semantic view over four sales rows.
+
+    The rows are ``(1, 'US', 10)``, ``(2, 'CA', 20)``, ``(3, 'US', 5)`` and ``(4, 'US', 10)``
+    as ``(id, country, unit_price)``; ``revenue`` is ``COUNT(*)``.
+    """
+    pytest.importorskip("adbc_driver_duckdb")
+    from adbc_poolhouse import DuckDBConfig, close_pool
+    from sqlalchemy import event
+
+    from semolina.config import create_engine
+
+    engine = create_engine(DuckDBConfig(database=":memory:", pool_size=1))
+
+    def _setup(dbapi_conn: Any, _record: Any) -> None:
+        cur = dbapi_conn.cursor()
+        cur.execute("CREATE TABLE sales_data (id INTEGER, country VARCHAR, unit_price INTEGER)")
+        cur.execute(
+            "INSERT INTO sales_data VALUES (1, 'US', 10), (2, 'CA', 20), (3, 'US', 5),"
+            " (4, 'US', 10)"
+        )
+        cur.execute(
+            "CREATE SEMANTIC VIEW sales_view AS TABLES (s AS sales_data PRIMARY KEY (id))"
+            " FACTS (s.unit_price AS unit_price) DIMENSIONS (s.country AS country)"
+            " METRICS (s.revenue AS COUNT(*))"
+        )
+        cur.close()
+        dbapi_conn.commit()
+
+    event.listen(engine._pool, "connect", _setup, once=True)
+    try:
+        return engine.execute(query).fetchall()
+    finally:
+        close_pool(engine._pool)
