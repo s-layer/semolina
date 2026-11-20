@@ -292,10 +292,11 @@ def probe_query(engine: Engine, query: Query, *, class_name: str, origin: str) -
             probed.route
             # 'execute-schema'
     """
-    builder = engine.dialect.create_builder()
-    sql, params = builder.build_select_with_params(projection_only(query))
-
     with engine.connect() as conn:
+        # Built after the checkout: a DuckDB pool records the loaded extension's release on
+        # the dialect as it opens a connection, and the SQL it writes depends on it.
+        builder = engine.dialect.create_builder()
+        sql, params = builder.build_select_with_params(projection_only(query))
         cursor = conn.cursor()
         try:
             probed = probe_schema(cursor, sql, params)

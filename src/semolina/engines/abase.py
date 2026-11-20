@@ -215,11 +215,13 @@ class AsyncEngine(_EngineBase):
         # query never takes a pool slot.
         query._validate_for_execution()
 
-        builder = self.dialect.create_builder()
-        sql, params = builder.build_select_with_params(query)
-
         conn = await self.connect()
         try:
+            # Built after the checkout, not before: a DuckDB pool records the loaded extension's
+            # release on the dialect as it opens a connection, and the SQL for a fact selected
+            # beside a dimension depends on it. A build error returns the connection below.
+            builder = self.dialect.create_builder()
+            sql, params = builder.build_select_with_params(query)
             # A plain synchronous accessor: the dbapi cursor() does no I/O, so
             # adbc-poolhouse offloads nothing and there is nothing to await.
             cur = conn.cursor()

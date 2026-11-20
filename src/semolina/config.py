@@ -13,7 +13,7 @@ import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from adbc_poolhouse import (
     DatabricksConfig,
@@ -25,13 +25,16 @@ from adbc_poolhouse import (
 
 from .dialect import Dialect, resolve_dialect
 from .engines.databricks import DatabricksEngine
-from .engines.duckdb import DuckDBEngine
+from .engines.duckdb import DuckDBEngine, _extension_release
 from .engines.snowflake import SnowflakeEngine
 from .exceptions import SemolinaExtensionLoadError, _connecting
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .engines.abase import AsyncEngine
     from .engines.base import Engine
+    from .engines.sql import DuckDBDialect
 
 __all__ = [
     "WarehouseConfig",
@@ -116,6 +119,34 @@ def _load_semantic_views(dbapi_conn: Any, connection_record: Any) -> None:
     finally:
         # An open statement stops the connection closing, and the pool closes it on failure.
         cur.close()
+
+
+def _semantic_views_release_recorder(dialect: DuckDBDialect) -> Callable[[Any, Any], None]:
+    """
+    Build a pool ``connect`` listener that records the loaded ``semantic_views`` release.
+
+    Registered after :func:`_load_semantic_views`, so it reads the extension that listener
+    loaded, on every new physical connection. The release lands on the engine's own
+    :class:`~semolina.engines.sql.DuckDBDialect`, where the SQL builder reads it: a fact
+    selected beside a dimension is written one way before extension 0.18.0 and another way
+    from it. Each engine builds its SQL after checking a connection out, so even its first
+    query is written for the release that connection loaded.
+
+    Args:
+        dialect: The engine's DuckDB dialect.
+
+    Returns:
+        The listener, taking SQLAlchemy's ``(dbapi_connection, connection_record)``.
+    """
+
+    def record(dbapi_conn: Any, connection_record: Any) -> None:
+        cur = dbapi_conn.cursor()
+        try:
+            dialect.semantic_views_release = _extension_release(cur)
+        finally:
+            cur.close()
+
+    return record
 
 
 def _inner_sync_pool(pool: Any) -> Any:
@@ -368,12 +399,18 @@ def create_engine(
     with _connecting("Could not connect to the warehouse"):
         pool = create_pool(wh_config)
 
+    dialect_instance = resolve_dialect(dialect)
     if dialect is Dialect.DUCKDB:
         from sqlalchemy import event
 
         event.listen(pool, "connect", _load_semantic_views)
+        # After the loader, so it reads the release that listener loaded.
+        event.listen(
+            pool,
+            "connect",
+            _semantic_views_release_recorder(cast("DuckDBDialect", dialect_instance)),
+        )
 
-    dialect_instance = resolve_dialect(dialect)
     engine_cls = _engine_cls_for_dialect(dialect)
     engine = engine_cls(pool=pool, dialect=dialect_instance, config=wh_config)
 
@@ -486,16 +523,21 @@ def create_async_engine(
     with _connecting("Could not connect to the warehouse"):
         pool = create_async_pool(wh_config)
 
+    dialect_instance = resolve_dialect(dialect)
     if dialect is Dialect.DUCKDB:
         from sqlalchemy import event
 
         # The async pool is a plain wrapper, not a SQLAlchemy event target, so
-        # the listener attaches to the inner sync pool it wraps — reached
+        # the listeners attach to the inner sync pool it wraps — reached
         # through a guard, because that inner pool is not part of
         # adbc-poolhouse's published surface.
         event.listen(_inner_sync_pool(pool), "connect", _load_semantic_views)
+        event.listen(
+            _inner_sync_pool(pool),
+            "connect",
+            _semantic_views_release_recorder(cast("DuckDBDialect", dialect_instance)),
+        )
 
-    dialect_instance = resolve_dialect(dialect)
     # No engine-subclass lookup: AsyncEngine is concrete and backend-agnostic,
     # because introspect() is the only method backends specialize and async
     # introspection is deferred.

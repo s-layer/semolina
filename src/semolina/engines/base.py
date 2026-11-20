@@ -306,11 +306,13 @@ class Engine(_EngineBase, ABC):
         # query never takes a pool slot.
         query._validate_for_execution()
 
-        builder = self.dialect.create_builder()
-        sql, params = builder.build_select_with_params(query)
-
         conn = self.connect()
         try:
+            # Built after the checkout, not before: a DuckDB pool records the loaded extension's
+            # release on the dialect as it opens a connection, and the SQL for a fact selected
+            # beside a dimension depends on it. A build error returns the connection below.
+            builder = self.dialect.create_builder()
+            sql, params = builder.build_select_with_params(query)
             cur = conn.cursor()
             cur.execute(sql, params)
         except BaseException:
