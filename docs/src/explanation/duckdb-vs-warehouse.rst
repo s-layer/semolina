@@ -57,10 +57,21 @@ Fact queries return the same rows
 A query that selects facts and no metric is grouped on Snowflake and Databricks with
 ``GROUP BY ALL``, so it comes back with one row per distinct combination of values.
 DuckDB's ``semantic_view()`` returns facts one row per source row, so Semolina sends
-``SELECT DISTINCT`` for a DuckDB fact query, and the three backends return the same rows.
+``SELECT DISTINCT`` for a DuckDB query that selects only facts, and the three backends
+return the same rows.
 
-What still differs is what DuckDB will accept: ``semantic_view()`` can't select facts and
-metrics together, so Semolina refuses that combination with ``ValueError`` on DuckDB and
+A query that selects facts and dimensions together depends on the extension's release.
+From version 0.18.0 the ``semantic_views`` extension refuses a ``semantic_view()`` call that
+lists ``facts`` beside ``dimensions``, as Snowflake's own ``SEMANTIC_VIEW()`` clause does,
+and takes a fact listed under ``dimensions``, which it groups on. So Semolina lists the facts
+under ``dimensions`` there. An earlier release does the opposite: it knows a ``dimensions``
+name only as a dimension, and takes the two lists together. There Semolina sends both lists
+and ``SELECT DISTINCT``. Semolina reads the release from each connection the engine opens,
+so either way you get the one row per distinct combination that ``GROUP BY ALL`` gives on
+Snowflake and Databricks.
+
+What still differs is what Semolina sends to DuckDB: it doesn't combine facts and metrics in
+one ``semantic_view()`` call, and refuses that query with ``ValueError`` on DuckDB, while it
 sends it to Snowflake and Databricks as written.
 
 Decimals are not a DuckDB difference

@@ -676,6 +676,25 @@ extension. :py:func:`~semolina.config.create_engine` runs
 connection in the pool, so you do not need to install or load it yourself. ``INSTALL``
 is a no-op once the extension is cached locally.
 
+.. _howto-backends-duckdb-extension-version:
+
+``INSTALL`` doesn't update a cached extension either, so a machine that installed it a
+while ago may hold an older release than a fresh CI runner. Some of what Semolina does
+depends on the release: codegen reads ``S_LAYER_*`` tags from 0.17.0, and a fact selected
+beside a dimension is sent differently from 0.18.0 (Semolina reads the release from each
+connection and writes the query to suit). To see which release a connection loaded, and to
+update it:
+
+.. code-block:: sql
+
+   SELECT extension_version FROM duckdb_extensions()
+   WHERE extension_name = 'semantic_views';
+
+   UPDATE EXTENSIONS (semantic_views);
+
+An update applies to connections opened after it, so restart your application or dispose
+of the engine's pool afterwards.
+
 The first ``INSTALL`` downloads the extension, so it needs network access. If either step
 fails, for example because you are offline or the cached build does not match your DuckDB
 version, the checkout raises :py:exc:`~semolina.exceptions.SemolinaExtensionLoadError`

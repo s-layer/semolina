@@ -106,6 +106,11 @@ This requires polars and nothing else (``pip install "semolina[polars]"``). ADBC
 the result's raw Arrow PyCapsule stream rather than building a table first, so no PyArrow is
 involved at any point on this path.
 
+polars 1 and polars 2 both return a ``DataFrame`` here. Under polars 2,
+``adbc-driver-manager`` before 1.13.0 returned a one-column struct ``Series`` instead.
+Semolina requires ``adbc-poolhouse`` 1.8.1 or later, which brings ``adbc-driver-manager``
+1.13.0, so you get the frame.
+
 .. warning::
 
    ``fetch_polars()`` has to be the first read on the cursor. After iterating the cursor,
@@ -122,7 +127,8 @@ Decimals differ between pandas and polars
 A ``DECIMAL`` metric keeps its precision on both routes, but only one of them keeps its type.
 
 polars gives a warehouse ``decimal128(38, 2)`` column a native ``Decimal(precision=38,
-scale=2)`` dtype holding :py:class:`decimal.Decimal` values, observed at polars 1.43.2.
+scale=2)`` dtype holding :py:class:`decimal.Decimal` values, observed at polars 1.43.2 and
+2.1.0.
 pandas has no decimal dtype, so the same column falls back to an ``object`` column of
 :py:class:`decimal.Decimal` values: the values are intact, the column is untyped.
 

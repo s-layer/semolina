@@ -189,9 +189,11 @@ default, so declare what your ``introspect()`` fills:
        )
 
 If your backend can hold some of that metadata on one view but not on another, set the
-names it couldn't read on that ``IntrospectedView``'s ``unread_metadata``.
-``--check`` leaves those out for that view only, so a ``label=`` written by hand isn't
-reported as drift where the warehouse has nowhere to keep it.
+names it couldn't read on that view's
+:py:attr:`IntrospectedView.unread_metadata
+<semolina.introspection.IntrospectedView.unread_metadata>`. ``--check`` leaves those out
+for that view only, so a ``label=`` written by hand isn't reported as drift where the
+warehouse has nowhere to keep it.
 
 Save that as ``my_engines.py`` and pass ``--backend my_engines.CatalogueEngine``. Codegen
 adds the working directory to the end of ``sys.path`` before importing it, so a module
@@ -594,8 +596,8 @@ but carried no column for one field doesn't change the exit code on its own; the
 names the fields that fell back, so you can see which rows to distrust.
 
 A view that needs more than one query gets a route per query, not one for the run:
-DuckDB cannot select facts and metrics in a single ``semantic_view()`` call, and a
-driver is free to answer one query and refuse the other.
+Semolina doesn't send facts and metrics to DuckDB in a single ``semantic_view()`` call,
+and a driver is free to answer one query and refuse the other.
 
 Read the Detail lines
 ~~~~~~~~~~~~~~~~~~~~~
@@ -622,8 +624,8 @@ Each moves the row to ``drift`` and prints a line under the table naming what mo
 Only what the backend records is compared (see :ref:`howto-models-metadata`). On DuckDB,
 labels and formats are read from member tags, which need ``semantic_views`` 0.17.0 or
 later. Before 0.17.0 the extension can't store tags, so a ``label=`` or
-``semantic_format=`` you added there is never drift. From 0.17.0, one the view's tags
-don't hold is. Formats compare by meaning rather than by spelling. Synonyms compare
+``semantic_format=`` you added there is never drift. From 0.17.0 it is drift when the
+view's tags don't hold it. Formats compare by meaning rather than by spelling. Synonyms compare
 as a set, so their order doesn't matter. The model's own ``description=`` is compared
 with the view's comment, and a difference prints as ``Detail: (view): description: ...``
 and makes the run exit ``5`` even when every row matches.

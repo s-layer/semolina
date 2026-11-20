@@ -212,10 +212,18 @@ project_terms:
       The semantic-format block a field's `semantic_format=` takes (from
       s-layer-semantic-formats). Tag names are spelled ``S_LAYER_KIND``,
       ``S_LAYER_SPEC``, ``S_LAYER_LABEL`` or ``S_LAYER_*``; never "S_LAYER block".
-      On DuckDB, say Semolina reads no tags, not that DuckDB has none.
+      Since 0.10.0 Semolina reads DuckDB member tags too, from the ``TAGS`` row of
+      ``DESCRIBE SEMANTIC VIEW``, on ``semantic_views`` 0.17.0 or later. Before 0.17.0,
+      say the extension can't store tags, not that Semolina doesn't read them.
   - canonical: "time grain"
     variants: ["grain"]
     note: "Both fine in prose; `.grain()` / `Dimension.grain` in code."
+  - canonical: "semantic_views"
+    variants: ["duckdb-semantic-views"]
+    note: >-
+      The DuckDB community extension. Prose writes ``semantic_views`` (the name it
+      installs and loads under) with a version: "version 0.17.0 or later of the
+      ``semantic_views`` extension" or "``semantic_views`` 0.17.0".
   - canonical: "metadata arguments"
     variants: []
     note: >-
