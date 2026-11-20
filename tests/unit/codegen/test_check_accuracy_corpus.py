@@ -530,17 +530,16 @@ class TestM10TheProbeIsUnfiltered:
     that passes, or a documented limitation D9 accepts").
     """
 
-    def test_every_probe_query_carries_no_filter(self, probe_engine: Engine) -> None:
-        from semolina.codegen.annotation_check import _build_query, _canonical_model, _field_groups
+    def test_the_probe_query_carries_no_filter(self, probe_engine: Engine) -> None:
+        from semolina.codegen.annotation_check import _build_query, _canonical_model, _probe_fields
 
         view = probe_engine.introspect(VIEW)
         model = _canonical_model(view)
         builder = probe_engine.dialect.create_builder()
 
-        for group in _field_groups(view, split_facts=True):
-            sql, params = builder.build_select_with_params(_build_query(model, group))
-            assert "WHERE" not in sql.upper()
-            assert not params
+        sql, params = builder.build_select_with_params(_build_query(model, _probe_fields(view)))
+        assert "WHERE" not in sql.upper()
+        assert not params
 
 
 # ---------------------------------------------------------------------------

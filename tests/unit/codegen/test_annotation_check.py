@@ -969,7 +969,7 @@ class TestCatalogueNamesReachSqlEscaped:
     def test_a_catalogue_source_name_with_a_quote_stays_inside_its_literal(self) -> None:
         import re
 
-        from semolina.codegen.annotation_check import _build_query, _canonical_model, _field_groups
+        from semolina.codegen.annotation_check import _build_query, _canonical_model, _probe_fields
         from semolina.engines.sql import DuckDBDialect, DuckDBSQLBuilder
 
         payload = "x') FROM read_csv('/etc/passwd') --"
@@ -985,8 +985,7 @@ class TestCatalogueNamesReachSqlEscaped:
 
         builder = DuckDBSQLBuilder(DuckDBDialect())
         model = _canonical_model(view)
-        groups = _field_groups(view, split_facts=True)
-        sql, _params = builder.build_select_with_params(_build_query(model, groups[0]))
+        sql, _params = builder.build_select_with_params(_build_query(model, _probe_fields(view)))
 
         assert sql == (
             'SELECT "x\') FROM read_csv(\'/etc/passwd\') --" AS "country"\n'

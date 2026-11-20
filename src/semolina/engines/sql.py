@@ -2020,9 +2020,8 @@ class DuckDBSQLBuilder(SQLBuilder):
       requesting it changes no grain.
 
     Note:
-        The ``facts`` and ``metrics`` parameters cannot be combined in the
-        same ``semantic_view()`` call. This builder raises ``ValueError``
-        if both are present.
+        A fact selected beside a dimension or a metric is listed under ``dimensions``, which
+        ``semantic_views`` 0.18.0 and later group on. Only a fact-only query uses ``facts``.
     """
 
     def _build_template(self, query: Query) -> tuple[str, list[Any]]:
@@ -2042,9 +2041,8 @@ class DuckDBSQLBuilder(SQLBuilder):
             one, is the first parameter, then the outer ``WHERE`` values.
 
         Raises:
-            ValueError: If both facts and metrics are present in the query, if a filter mixes
-                a dimension and a metric under ``OR`` or ``NOT``, or if ``order_by()`` names
-                a dimension or fact the query does not select.
+            ValueError: If a filter mixes a dimension and a metric under ``OR`` or ``NOT``, or
+                if ``order_by()`` names a dimension or fact the query does not select.
         """
         from semolina.fields import Fact, GrainedDimension
 
@@ -2078,14 +2076,6 @@ class DuckDBSQLBuilder(SQLBuilder):
             if col_name not in metric_names:
                 metric_names.append(col_name)
 
-        # Validate: facts and metrics cannot be combined
-        if fact_names and metric_names:
-            raise ValueError(
-                "DuckDB semantic_view() does not support combining facts and metrics "
-                "in the same query. Use either .metrics() with .dimensions() for "
-                "grouped queries, or .dimensions(fact_field) for fact queries."
-            )
-
         # Get view name from first field's owner
         view_name: str | None = None
         if query.selected_metrics:
@@ -2098,11 +2088,12 @@ class DuckDBSQLBuilder(SQLBuilder):
             view_name = owner._view_name
         assert view_name is not None, "View name not found on field owner"
 
-        # Since semantic_views 0.18.0 a call may not list both `facts` and `dimensions`
-        # (Snowflake's 2026_07 rule). A fact listed in `dimensions` is grouped on, which is
-        # what GROUP BY ALL does on the other dialects, so a query selecting both asks for
-        # them all as dimensions. A fact-only query keeps `facts` and the DISTINCT below.
-        if fact_names and dim_names:
+        # Since semantic_views 0.18.0 a call may list `facts` with neither `dimensions` nor
+        # `metrics` (Snowflake's 2026_07 rule). A fact listed in `dimensions` is grouped on, and
+        # groups any metric, which is what GROUP BY ALL does on the other dialects. So a fact
+        # beside a dimension or a metric is asked for as a dimension. A fact-only query keeps
+        # `facts` and the DISTINCT below.
+        if fact_names and (dim_names or metric_names):
             dim_names.extend(fact_names)
             fact_names = []
 
@@ -2135,7 +2126,8 @@ class DuckDBSQLBuilder(SQLBuilder):
         if fact_names:
             # semantic_view() returns facts row by row, while Snowflake and Databricks group
             # every query with GROUP BY ALL. DISTINCT gives a fact query the same rows here.
-            # Facts never combine with metrics (refused above), so nothing is aggregated.
+            # Only a fact-only query gets here (a metric moves the facts above), so nothing is
+            # aggregated.
             select_clause = "SELECT DISTINCT " + select_clause.removeprefix("SELECT ")
         parts = [select_clause, f"FROM {sv_call}"]
 
