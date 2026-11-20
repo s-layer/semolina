@@ -1928,52 +1928,6 @@ class TestDuckDBSQLBuilder:
         )
         assert params == []
 
-    @pytest.mark.parametrize("release", [(0, 16, 0), (0, 17, 0), (0, 17, 9)])
-    def test_facts_and_dimensions_keep_their_own_lists_before_semantic_views_0_18(
-        self, release: tuple[int, int, int]
-    ) -> None:
-        """
-        Before ``semantic_views`` 0.18.0 a fact goes in ``facts``, beside ``dimensions``.
-
-        Those releases look a ``dimensions`` name up among the view's dimensions only, so a
-        fact listed there fails with "unknown dimension". They accept the two lists together
-        instead, and return a row per fact row, so the query keeps ``SELECT DISTINCT`` to give
-        the grouped rows the other dialects' ``GROUP BY ALL`` gives.
-        """
-        dialect = DuckDBDialect()
-        dialect.semantic_views_release = release
-        query = Sales.query().dimensions(Sales.country, Sales.unit_price)
-        sql, params = DuckDBSQLBuilder(dialect).build_select_with_params(query)
-        assert sql == (
-            'SELECT DISTINCT "country" AS "country", "unit_price" AS "unit_price"\n'
-            "FROM semantic_view('sales_view', "
-            "dimensions := ['country'], facts := ['unit_price'])"
-        )
-        assert params == []
-
-    @pytest.mark.parametrize("release", [(0, 18, 0), (0, 19, 0), (1, 0, 0), None])
-    def test_facts_go_in_dimensions_from_semantic_views_0_18_or_an_unknown_release(
-        self, release: tuple[int, int, int] | None
-    ) -> None:
-        """
-        From 0.18.0, or with the release unknown, facts beside dimensions go in ``dimensions``.
-
-        ``None`` is a dialect no engine has connected yet (``Query.to_sql()``) or a local build
-        whose version is a commit hash: both are taken to be current releases.
-        """
-        dialect = DuckDBDialect()
-        dialect.semantic_views_release = release
-        query = Sales.query().dimensions(Sales.country, Sales.unit_price)
-        sql, _ = DuckDBSQLBuilder(dialect).build_select_with_params(query)
-        assert sql == (
-            'SELECT "country" AS "country", "unit_price" AS "unit_price"\n'
-            "FROM semantic_view('sales_view', dimensions := ['country', 'unit_price'])"
-        )
-
-    def test_a_new_dialect_has_no_semantic_views_release(self) -> None:
-        """A dialect knows the extension's release only once an engine's connection reports it."""
-        assert DuckDBDialect().semantic_views_release is None
-
     def test_a_source_override_is_requested_by_source_and_returned_by_field_name(self):
         """``source=`` names the member asked for; the alias is still the field's own name."""
 

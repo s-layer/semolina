@@ -147,14 +147,6 @@ def _timestamp_literal_text(value: datetime.datetime) -> str:
     return f"{utc_value.isoformat()}Z"
 
 
-_FACTS_AS_DIMENSIONS_SINCE = (0, 18, 0)
-"""
-The first ``semantic_views`` release that takes a fact in ``dimensions``.
-
-The same release refuses ``facts`` and ``dimensions`` in one call, so a DuckDB query that
-selects both is written one way before it and the other way from it.
-"""
-
 _SLOT = "\x00"
 """
 Where a bound value goes, as the compiler writes it.
@@ -1014,18 +1006,6 @@ class DuckDBDialect(SQLDialect):
 
     ``"Territory"`` and ``"territory"`` name one column, so either shadows the other alias.
     """
-
-    def __init__(self) -> None:
-        self.semantic_views_release: tuple[int, ...] | None = None
-        """
-        The loaded ``semantic_views`` release as ``(major, minor, patch)``, or None if unknown.
-
-        An engine's DuckDB pool sets it each time it opens a connection, from the extension the
-        connection loaded, and the engine builds each query's SQL after checking a connection
-        out. It stays None on a dialect whose engine has not connected yet (``Query.to_sql()``
-        can render one) and for a local build whose version is a commit hash; the builder then
-        writes SQL for a current release.
-        """
 
     @property
     def placeholder(self) -> str:
@@ -2122,10 +2102,7 @@ class DuckDBSQLBuilder(SQLBuilder):
         # (Snowflake's 2026_07 rule). A fact listed in `dimensions` is grouped on, which is
         # what GROUP BY ALL does on the other dialects, so a query selecting both asks for
         # them all as dimensions. A fact-only query keeps `facts` and the DISTINCT below.
-        # Earlier releases look a `dimensions` name up among dimensions only, and take the two
-        # lists together instead, so on those both lists stay and DISTINCT groups the rows.
-        release = cast("DuckDBDialect", self.dialect).semantic_views_release
-        if fact_names and dim_names and (release is None or release >= _FACTS_AS_DIMENSIONS_SINCE):
+        if fact_names and dim_names:
             dim_names.extend(fact_names)
             fact_names = []
 
