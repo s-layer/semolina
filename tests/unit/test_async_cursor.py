@@ -997,6 +997,34 @@ class TestAsyncFetchPolars:
         assert "region" in frame.columns
         assert set(frame.get_column("region")) == {"US", "MX", "CA"}
 
+    async def test_returns_a_frame_with_one_column_per_result_column_on_polars_2(
+        self, async_probe_engine: Any
+    ) -> None:
+        """
+        Under polars 2, ``await fetch_polars()`` returns a frame of the result's columns.
+
+        The async twin of the sync test of the same name. adbc-poolhouse 1.6.4 to 1.8.0
+        unnested the struct ``Series`` that polars 2 and adbc-driver-manager before 1.13
+        produce (apache/arrow-adbc#4915); 1.8.1 dropped that workaround and relies on its
+        adbc-driver-manager>=1.13 floor instead. So this side now holds only because of the
+        same floor as the sync side, and is pinned the same way: polars 2 required (a skip
+        fails CI), and the rows compared in full with the metric's ``Decimal`` dtype.
+        """
+        polars = pytest.importorskip("polars", minversion="2.0.0")
+        from decimal import Decimal
+
+        async with await _async_probe_cursor(async_probe_engine) as cursor:
+            frame = await cursor.fetch_polars()
+
+        assert isinstance(frame, polars.DataFrame), type(frame)
+        assert sorted(frame.columns) == ["region", "total_order_value"]
+        assert frame.schema["total_order_value"] == polars.Decimal(precision=38, scale=2)
+        assert frame.sort("region").select("region", "total_order_value").rows() == [
+            ("CA", None),
+            ("MX", Decimal("100.00")),
+            ("US", Decimal("43.25")),
+        ]
+
 
 class TestAsyncMissingDependencyGuards:
     """

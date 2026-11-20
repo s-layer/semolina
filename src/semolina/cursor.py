@@ -356,11 +356,11 @@ class SemolinaCursor(_CursorBase):
         ``ProgrammingError("Result set has been closed or consumed")``. Reading ``description``
         first is safe; it does not import the stream.
 
-        A ``DECIMAL`` metric keeps its precision and its type: polars 1.43.2 gives a warehouse
-        ``decimal128(38, 2)`` column a native ``Decimal(precision=38, scale=2)`` dtype holding
-        ``decimal.Decimal`` values, measured on this project's own type-fidelity probe. That is
-        better than ``fetch_df()``, where the same column falls back to an untyped ``object``
-        dtype. One condition, recorded because it is reachable in principle and not in
+        A ``DECIMAL`` metric keeps its precision and its type: polars 1.43.2 and 2.1.0 give a
+        warehouse ``decimal128(38, 2)`` column a native ``Decimal(precision=38, scale=2)`` dtype
+        holding ``decimal.Decimal`` values, measured on this project's own type-fidelity probe.
+        That is better than ``fetch_df()``, where the same column falls back to an untyped
+        ``object`` dtype. One condition, recorded because it is reachable in principle and not in
         practice: polars was measured raising a Rust ``PanicException`` on a ``decimal256``
         column, and no backend Semolina supports has been observed producing one — a Snowflake
         ``NUMBER`` stops at precision 38, and Databricks and DuckDB decimals stop there too.

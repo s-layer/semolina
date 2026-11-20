@@ -57,11 +57,23 @@ Fact queries return the same rows
 A query that selects facts and no metric is grouped on Snowflake and Databricks with
 ``GROUP BY ALL``, so it comes back with one row per distinct combination of values.
 DuckDB's ``semantic_view()`` returns facts one row per source row, so Semolina sends
-``SELECT DISTINCT`` for a DuckDB fact query, and the three backends return the same rows.
+``SELECT DISTINCT`` for a DuckDB query that selects only facts, and the three backends
+return the same rows.
 
-What still differs is what DuckDB will accept: ``semantic_view()`` can't select facts and
-metrics together, so Semolina refuses that combination with ``ValueError`` on DuckDB and
-sends it to Snowflake and Databricks as written.
+A query that selects facts and dimensions together reaches the same rows by another route.
+From version 0.18.0 the ``semantic_views`` extension refuses a ``semantic_view()`` call that
+lists ``facts`` beside ``dimensions``, as Snowflake's own ``SEMANTIC_VIEW()`` clause does,
+and takes a fact listed under ``dimensions``, which it groups on. So Semolina lists the facts
+under ``dimensions``, which gives the one row per distinct combination that ``GROUP BY ALL``
+gives on Snowflake and Databricks. An earlier release knows a ``dimensions`` name only as a
+dimension, so this query needs 0.18.0 or later: on an older cached extension it fails with
+"unknown dimension" until you update it (see
+:ref:`Check the extension's release <howto-backends-duckdb-extension-version>`).
+
+A query that selects a fact beside a metric takes the same route. The extension refuses a
+call that lists ``facts`` beside ``metrics``, so Semolina lists the fact under
+``dimensions``, and the metric is computed per fact value, as ``GROUP BY ALL`` computes it on
+Snowflake and Databricks. This also needs 0.18.0 or later.
 
 Decimals are not a DuckDB difference
 ------------------------------------
@@ -108,10 +120,9 @@ replays contain only successful queries, so there is no observation of what eith
 raises for any of those four failures, and guessing from the DuckDB result would be
 guessing twice: once about the driver, once about the warehouse behind it.
 
-Error classification is per-driver knowledge you acquire by
-watching your own driver, and that a handler written against DuckDB's classification is
-a handler written against one measurement. The "Catch the exception the driver actually
-raised" section of :ref:`howto-web-api` has the measured table;
+So which exception a failed query raises is something you learn by watching your own
+driver fail. A handler written against DuckDB's classification rests on one measurement,
+of one driver. The "Catch the exception the driver actually raised" section of :ref:`howto-web-api` has the measured table;
 :ref:`tutorial-dashboard-api` has the shape of a handler that does not depend on it.
 
 What Semolina smooths over, and what it leaves alone

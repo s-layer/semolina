@@ -5,6 +5,8 @@ version: 1
 # for the 0.9.0 surface (query by name, time grains, field metadata, codegen --check).
 # Reused unchanged on 2026-10-27 for the 0.9.1 gate: no pages were added or removed, and
 # DE S3/S4 and WD S4 already exercise the 0.9.1 surface (Databricks formats, DuckDB 2.0).
+# Reused on 2026-11-20 for the 0.10.0 gate (no pages added or removed). WD S3 covers DuckDB
+# tags; WD S5 was added because no scenario reached fetch_polars or a fact query.
 user_personas:
   - name: "Data engineers exposing semantic layers via APIs"
     skill_level: "intermediate"
@@ -66,6 +68,14 @@ user_personas:
         starting_point: "docs/src/index.rst"
         persona_relevance: "Kept from the previous set: serving the semantic layer to a frontend team is the reason I use the library, and I have never written a REST endpoint."
         done_when: "I have runnable endpoint code covering engine startup/shutdown, an optional filter parameter, and a mapping from failures to HTTP status codes."
+      # Added 2026-11-20 for the 0.10.0 gate: S1-S5 already cover the DuckDB tags (S2, S4) and
+      # the DuckDB facts-with-dimensions fix (S4), but none covered polars 2 or the
+      # adbc-poolhouse>=1.8.1 floor.
+      - id: S6
+        goal: "I want to move our pipeline to polars 2 and keep pulling metric results with fetch_polars, and know which dependency floors to pin in our locked environment"
+        starting_point: "docs/src/index.rst"
+        persona_relevance: "Our ELT jobs hand semantic-layer results to polars, and the platform's lockfile is mine to maintain. A polars major bump that silently changes a return type breaks every downstream job."
+        done_when: "I know which extra to install for fetch_polars, that it returns a polars.DataFrame on polars 2, which adbc-poolhouse / adbc-driver-manager floor makes that true, what an older environment returned instead, and whether decimals keep their dtype under polars 2."
   - name: "Python web developers building analytics backends"
     skill_level: "advanced"
     generated_at: "2026-10-26"
@@ -121,3 +131,9 @@ user_personas:
         starting_point: "docs/src/index.rst"
         persona_relevance: "Kept from the previous set: the core path the library exists for."
         done_when: "I can run a FastAPI app that returns JSON from a semantic view, and know which lines change to run it against Snowflake."
+      - id: S5
+        added_at: "2026-11-20"
+        goal: "I want an order-detail table endpoint: unit price (a fact) listed by country and category (dimensions), fetched as a polars DataFrame under polars 2, on DuckDB in development and Snowflake in production"
+        starting_point: "docs/src/index.rst"
+        persona_relevance: "Added for the 0.10.0 gate, since no scenario reached fetch_polars or a fact query. A drill-down table under the chart is the next widget after the time series, and the team has moved to polars 2."
+        done_when: "I know how to select a fact beside dimensions, which rows come back on DuckDB versus Snowflake, what to expect if I add a metric, that fetch_polars returns a DataFrame under polars 2 and what install gets me that."

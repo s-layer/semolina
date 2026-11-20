@@ -1,6 +1,6 @@
 [project]
 name = "semolina"
-version = "0.9.1"
+version = "0.10.0"
 description = "A Pythonic ORM for querying data warehouse semantic views (Snowflake, Databricks, DuckDB)"
 readme = "README.md"
 authors = [
@@ -8,7 +8,11 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "adbc-poolhouse>=1.7.0",
+    # 1.8.1 brings adbc-driver-manager>=1.13.0, the first driver whose `fetch_polars()`
+    # returns a `polars.DataFrame` under polars 2 rather than a one-column struct `Series`
+    # (apache/arrow-adbc#4915). `SemolinaCursor.fetch_polars()` hands back the driver's own
+    # result, so this floor is what keeps the `[polars]` extra uncapped.
+    "adbc-poolhouse>=1.8.1",
     "s-layer-semantic-formats>=0.2.0,<0.3",
 ]
 
@@ -90,7 +94,10 @@ async = [
     #
     # Not before 1.7.0: an in-memory DuckDB pool was capped at `pool_size=1`, so an
     # async engine over `:memory:` serialized every query behind one connection.
-    "adbc-poolhouse[async]>=1.7.0",
+    #
+    # 1.8.1 because the base dependency needs it (see `dependencies`); a lower floor here
+    # would only restate a weaker bound than the one every install already gets.
+    "adbc-poolhouse[async]>=1.8.1",
 ]
 pyarrow = [
     # Optional: the Arrow result surface — `fetch_arrow_table`, `fetch_record_batch`,
@@ -132,13 +139,13 @@ polars = [
     # `Decimal(precision, scale)` dtype holding `decimal.Decimal` values — strictly better
     # than pandas' `object` dtype, and the reason Phase 47's assumption A3 could be closed.
     #
-    # Deliberately uncapped (Phase 49 PD-03). adbc-driver-manager >=1.12.0 already emits a
-    # `FutureWarning` during `fetch_polars()` saying
-    # `from_arrow(<ArrowStreamExportable>)` will return a `Series` instead of a `DataFrame`
-    # in polars 2.0 — so `fetch_polars()` WILL change shape when polars 2.0 lands. That is
-    # recorded as a todo rather than pre-empted with a `<2.0` cap: a cap in a published
-    # extra is itself a support burden, holding users back from a major release on the
-    # strength of a break nobody has seen yet.
+    # Deliberately uncapped (Phase 49 PD-03), and polars 2 works. polars 2 made
+    # `from_arrow(<ArrowStreamExportable>)` return a one-column struct `Series`, which
+    # adbc-driver-manager 1.12 and older handed back from `fetch_polars()` unchanged
+    # (apache/arrow-adbc#4915). 1.13.0 returns the frame again, and the base
+    # `adbc-poolhouse>=1.8.1` floor brings that driver, so no cap is needed here. The lock
+    # resolves polars 2, and `test_returns_a_frame_with_one_column_per_result_column_on_polars_2`
+    # in both cursor suites requires it.
     "polars>=1.0.0",
 ]
 arrowmodel = [

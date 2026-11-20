@@ -193,36 +193,28 @@ def _canonical_model(view: IntrospectedView) -> Any:
     return SemanticViewMeta(view.class_name, (SemanticView,), namespace, view=view.view_name)
 
 
-def _field_groups(view: IntrospectedView, *, split_facts: bool) -> list[list[IntrospectedField]]:
+def _probe_fields(view: IntrospectedView) -> list[IntrospectedField]:
     """
-    Split a view's fields into the groups one query each can select.
+    List the fields the probe query selects: metrics, then dimensions, then facts.
+
+    One query selects them all on every backend. On DuckDB the builder lists a fact beside a
+    metric under ``dimensions``, which ``semantic_views`` 0.18.0 and later group on.
 
     Args:
         view: The introspection result.
-        split_facts: True for DuckDB, where ``semantic_view()`` cannot take ``facts`` and
-            ``metrics`` in one call.
 
     Returns:
-        One non-empty group per query to build.
+        The fields, metrics first. Empty for a view with no fields.
     """
     metrics = [f for f in view.fields if f.field_type == "metric"]
     dimensions = [f for f in view.fields if f.field_type == "dimension"]
     facts = [f for f in view.fields if f.field_type == "fact"]
-
-    if not split_facts:
-        group = metrics + dimensions + facts
-        return [group] if group else []
-
-    # DuckDB: mirror how DuckDBEngine.introspect groups its DESCRIBE SELECT probes —
-    # dimensions with metrics in one call, facts alone in the other. `DuckDBSQLBuilder` raises
-    # ValueError when facts and metrics are both present (engines/sql.py:1234-1240).
-    groups = [metrics + dimensions, facts]
-    return [group for group in groups if group]
+    return metrics + dimensions + facts
 
 
-def _build_query(model: Any, group: list[IntrospectedField]) -> Any:
+def _build_query(model: Any, fields: list[IntrospectedField]) -> Any:
     """
-    Build the unfiltered query selecting exactly one field group.
+    Build the unfiltered query selecting exactly *fields*.
 
     Unfiltered — all metrics plus all dimensions, no WHERE — because Snowflake refuses
     ``ExecuteSchema`` for a query carrying any bound parameter, and ``--check`` has no filter
@@ -231,14 +223,14 @@ def _build_query(model: Any, group: list[IntrospectedField]) -> Any:
 
     Args:
         model: The runtime ``SemanticView`` subclass.
-        group: The fields to select.
+        fields: The fields to select.
 
     Returns:
         The query object.
     """
     query = model.query()
-    metrics = [getattr(model, f.name) for f in group if f.field_type == "metric"]
-    non_metrics = [getattr(model, f.name) for f in group if f.field_type != "metric"]
+    metrics = [getattr(model, f.name) for f in fields if f.field_type == "metric"]
+    non_metrics = [getattr(model, f.name) for f in fields if f.field_type != "metric"]
     if metrics:
         query = query.metrics(*metrics)
     if non_metrics:
@@ -496,28 +488,27 @@ def _metadata_annotation(field: IntrospectedField) -> str:
 
 def _probe_view(
     engine: Engine, view: IntrospectedView
-) -> tuple[list[tuple[pyarrow.Schema, str]], str]:
+) -> tuple[tuple[pyarrow.Schema, str] | None, str]:
     """
-    Probe the view's result schema, one query per field group.
+    Probe the view's result schema with one query selecting every field.
 
-    Each schema is returned **paired with the route that produced it**. A view can need more
-    than one query — DuckDB cannot select facts and metrics in one ``semantic_view()`` call —
-    and a driver may answer one and refuse another, which is the ordinary Snowflake shape
-    (``ExecuteSchema`` for a parameter-free query, a refusal for a parameterized one). One
-    route carried across the loop would label every row with whatever the last query did.
+    The schema is returned **paired with the route that produced it**, which labels each row
+    the probe answers: a driver may answer with ``ExecuteSchema`` or with the zero-row
+    fallback, which is the ordinary Snowflake shape for a parameterized query.
 
     Args:
         engine: A live engine.
         view: The introspection result.
 
     Returns:
-        The probed ``(schema, route)`` pairs, and an error string when the probe was
-        unavailable (empty otherwise). A non-empty error means the caller must use the
-        metadata route and label every row with it.
+        The probed ``(schema, route)`` pair, or None for a view with no fields or a probe
+        that was unavailable, and an error string in the latter case (empty otherwise). A
+        non-empty error means the caller must use the metadata route and label every row
+        with it.
     """
-    from semolina.engines.sql import DuckDBSQLBuilder
-
-    probes: list[tuple[pyarrow.Schema, str]] = []
+    fields = _probe_fields(view)
+    if not fields:
+        return None, ""
     try:
         # Inside the try, not before it. Setting the probe up is part of the probe: a
         # catalogue column named `query` makes `SemanticViewMeta` reject the name, and an
@@ -526,25 +517,22 @@ def _probe_view(
         # escapes `_run_check`'s three narrow `except` clauses, and produces the traceback
         # the comment below says this design avoids.
         builder = engine.dialect.create_builder()
-        groups = _field_groups(view, split_facts=isinstance(builder, DuckDBSQLBuilder))
         model = _canonical_model(view)
+        sql, params = builder.build_select_with_params(_build_query(model, fields))
 
         with engine.connect() as conn:
             cursor = conn.cursor()
             try:
-                for group in groups:
-                    sql, params = builder.build_select_with_params(_build_query(model, group))
-                    probed = probe_schema(cursor, sql, params)
-                    probes.append((probed.schema, probed.route))
+                probed = probe_schema(cursor, sql, params)
             finally:
                 cursor.close()
     except Exception as e:  # noqa: BLE001 - any probe failure is a fallback, not a crash
         # Decision 3 makes metadata a *labelled* fallback rather than a failure mode. The
         # catch is broad on purpose: the caller's alternative is a traceback for a mode whose
         # whole job is to report, and the route on every row records that this happened.
-        return [], f"{type(e).__name__}: {e}"
+        return None, f"{type(e).__name__}: {e}"
 
-    return probes, ""
+    return (probed.schema, probed.route), ""
 
 
 _ANY_SPELLINGS = frozenset({_UNMAPPED_ANNOTATION, metric_annotation(_UNMAPPED_ANNOTATION)})
@@ -644,7 +632,7 @@ def check_view(engine: Engine, view_name: str, committed: CommittedModel | None)
     """
     view = engine.introspect(view_name)
     compared = engine.introspected_metadata - view.unread_metadata
-    probes, probe_error = _probe_view(engine, view)
+    probe, probe_error = _probe_view(engine, view)
 
     committed_fields, renamed = (
         _match_renamed_fields(engine.dialect, view, committed.fields)
@@ -657,14 +645,13 @@ def check_view(engine: Engine, view_name: str, committed: CommittedModel | None)
         probed_annotation: str | None = None
         probe_detail = ""
         field_route = ROUTE_METADATA
-        # The route comes from the probe that *answered for this field*, not from the last
-        # one the loop ran. A two-group view can be answered by two different routes.
-        for schema, schema_route in probes:
+        # The route is the probe's own, and only on a row the probe answered.
+        if probe is not None:
+            schema, schema_route = probe
             resolved = _arrow_annotation(engine.dialect, field, schema)
             if resolved is not None:
                 probed_annotation, probe_detail = resolved
                 field_route = schema_route
-                break
 
         if probed_annotation is None:
             # No probed column for this field: fall back to metadata for this row alone and

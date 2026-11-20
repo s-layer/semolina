@@ -106,6 +106,11 @@ This requires polars and nothing else (``pip install "semolina[polars]"``). ADBC
 the result's raw Arrow PyCapsule stream rather than building a table first, so no PyArrow is
 involved at any point on this path.
 
+polars 1 and polars 2 both return a ``DataFrame`` here. Under polars 2,
+``adbc-driver-manager`` before 1.13.0 returned a one-column struct ``Series`` instead.
+Semolina requires ``adbc-poolhouse`` 1.8.1 or later, which brings ``adbc-driver-manager``
+1.13.0, so you get the frame.
+
 .. warning::
 
    ``fetch_polars()`` has to be the first read on the cursor. After iterating the cursor,
@@ -122,7 +127,8 @@ Decimals differ between pandas and polars
 A ``DECIMAL`` metric keeps its precision on both routes, but only one of them keeps its type.
 
 polars gives a warehouse ``decimal128(38, 2)`` column a native ``Decimal(precision=38,
-scale=2)`` dtype holding :py:class:`decimal.Decimal` values, observed at polars 1.43.2.
+scale=2)`` dtype holding :py:class:`decimal.Decimal` values, observed at polars 1.43.2 and
+2.1.0.
 pandas has no decimal dtype, so the same column falls back to an ``object`` column of
 :py:class:`decimal.Decimal` values: the values are intact, the column is untyped.
 
@@ -153,21 +159,35 @@ Reach for ``fetch_df()`` and ``fetch_polars()`` when the dataframe is the goal. 
 Fetch a whole result in async code
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-:py:meth:`~semolina.acursor.AsyncSemolinaCursor.fetch_arrow_table` is awaited, and
-materializes the whole result off the event loop:
+The async cursor has the same three whole-result methods, each awaited.
+:py:meth:`~semolina.acursor.AsyncSemolinaCursor.fetch_arrow_table`,
+:py:meth:`~semolina.acursor.AsyncSemolinaCursor.fetch_df` and
+:py:meth:`~semolina.acursor.AsyncSemolinaCursor.fetch_polars` read the whole result on a
+worker thread, so the event loop keeps serving other requests while they run:
 
 .. code-block:: python
 
-   async with await (
+   query = (
        Sales.query()
        .metrics(Sales.revenue)
        .dimensions(Sales.country)
-       .aexecute()
-   ) as cursor:
-       table = await cursor.fetch_arrow_table()
-       df = table.to_pandas()
+   )
 
-One detail is specific to async: awaiting ``fetch_arrow_table()`` creates no live Arrow
+   async with await query.aexecute() as cursor:
+       table = await cursor.fetch_arrow_table()
+
+   async with await query.aexecute() as cursor:
+       df = await cursor.fetch_df()  # pandas
+
+   async with await query.aexecute() as cursor:
+       df = await cursor.fetch_polars()  # polars
+
+They need the same packages and return the same types as the sync methods above:
+``fetch_df()`` needs pyarrow and pandas, ``fetch_polars()`` needs only polars, and
+``fetch_polars()`` still has to be the first read on the cursor. Each one reads the whole
+result, so use one per cursor.
+
+One detail is specific to async: awaiting a whole-result method creates no live Arrow
 reader, so it places no constraint on close ordering, while a streaming cursor holds a reader
 that must be closed before its connection. ``async with`` handles that ordering for you
 either way.

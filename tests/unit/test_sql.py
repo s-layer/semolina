@@ -1943,12 +1943,34 @@ class TestDuckDBSQLBuilder:
             "metrics := ['net_revenue'])"
         )
 
-    def test_facts_and_metrics_raises(self):
-        """ValueError when both facts and metrics are present."""
+    def test_a_fact_beside_a_metric_is_listed_under_dimensions(self):
+        """
+        A fact and a metric go into one call, the fact under ``dimensions``.
+
+        Since ``semantic_views`` 0.18.0 a fact listed under ``dimensions`` groups the metric,
+        as ``GROUP BY ALL`` does on the other dialects. The metric already groups the rows,
+        so no ``DISTINCT``.
+        """
         query = Sales.query().metrics(Sales.revenue).dimensions(Sales.unit_price)
-        builder = DuckDBSQLBuilder(DuckDBDialect())
-        with pytest.raises(ValueError, match="combining facts and metrics"):
-            builder.build_select_with_params(query)
+        sql, params = DuckDBSQLBuilder(DuckDBDialect()).build_select_with_params(query)
+        assert sql == (
+            'SELECT "revenue" AS "revenue", "unit_price" AS "unit_price"\n'
+            "FROM semantic_view('sales_view', dimensions := ['unit_price'], "
+            "metrics := ['revenue'])"
+        )
+        assert params == []
+
+    def test_a_fact_a_dimension_and_a_metric_are_listed_in_one_call(self):
+        """The fact follows the dimensions in ``dimensions``, and the metric is grouped by both."""
+        query = Sales.query().metrics(Sales.revenue).dimensions(Sales.unit_price, Sales.country)
+        sql, params = DuckDBSQLBuilder(DuckDBDialect()).build_select_with_params(query)
+        assert sql == (
+            'SELECT "revenue" AS "revenue", "unit_price" AS "unit_price", '
+            '"country" AS "country"\n'
+            "FROM semantic_view('sales_view', dimensions := ['country', 'unit_price'], "
+            "metrics := ['revenue'])"
+        )
+        assert params == []
 
     def test_where_clause(self):
         """A dimension filter goes into the call as one bound ``where_clause`` string."""
@@ -2124,11 +2146,23 @@ class TestDuckDBSQLBuilder:
         )
         assert params == [100]
 
-    def test_a_metric_filter_on_a_facts_query_is_refused(self):
-        """A metric filter needs the metric, and facts and metrics cannot be combined."""
+    def test_a_metric_filter_on_a_facts_query_groups_on_the_fact(self):
+        """
+        A metric filter requests the metric, so the fact moves under ``dimensions``.
+
+        The metric is requested but not projected, and the outer ``WHERE`` filters the
+        groups, as ``HAVING`` does on Snowflake. Grouping already gives each fact value once,
+        so no ``DISTINCT``.
+        """
         query = Sales.query().dimensions(Sales.unit_price).where(Sales.revenue > 100)
-        with pytest.raises(ValueError, match="combining facts and metrics"):
-            DuckDBSQLBuilder(DuckDBDialect()).build_select_with_params(query)
+        sql, params = DuckDBSQLBuilder(DuckDBDialect()).build_select_with_params(query)
+        assert sql == (
+            'SELECT "unit_price" AS "unit_price"\n'
+            "FROM semantic_view('sales_view', dimensions := ['unit_price'], "
+            "metrics := ['revenue'])\n"
+            'WHERE "revenue" > ?'
+        )
+        assert params == [100]
 
     def test_order_by_metric_no_agg_wrap(self):
         """ORDER BY uses plain quoted identifier for metrics (no AGG/MEASURE)."""
