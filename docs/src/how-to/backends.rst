@@ -681,7 +681,7 @@ is a no-op once the extension is cached locally.
 ``INSTALL`` doesn't update a cached extension either, so a machine that installed it a
 while ago may hold an older release than a fresh CI runner. Some of what Semolina does
 depends on the release: codegen reads ``S_LAYER_*`` tags from 0.17.0, and a query that
-selects a fact beside a dimension needs 0.18.0 (an older release answers it with "unknown
+selects a fact beside a dimension or a metric needs 0.18.0 (an older release answers it with "unknown
 dimension"). To see which release a connection loaded, and to update it:
 
 .. code-block:: sql
@@ -724,6 +724,20 @@ database file's name. ``CREATE SEMANTIC VIEW`` in ``orig.duckdb`` stores
    Run ``CREATE OR REPLACE SEMANTIC VIEW`` again in the new file to point the view at its
    own tables. Keep the DDL in a script so you can rerun it, rather than copying a
    database file between environments.
+
+Generate a model from a semantic view
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``semolina codegen --backend duckdb <view>`` runs ``DESCRIBE SEMANTIC VIEW`` over the same
+ADBC pool and writes a :py:class:`~semolina.models.SemanticView` subclass. Metrics,
+including derived ones, become :py:class:`~semolina.fields.Metric` fields, dimensions
+become :py:class:`~semolina.fields.Dimension` fields, and facts become
+:py:class:`~semolina.fields.Fact` fields. A ``PRIVATE`` metric or fact is left out, since
+you can't query it. A member's SQL type comes from ``DESCRIBE SEMANTIC VIEW`` from version
+0.14.0 of the extension, and from a ``DESCRIBE SELECT`` probe on an older one. A member's
+``COMMENT``, ``WITH SYNONYMS`` and, from 0.17.0, its ``S_LAYER_*`` tags become the field's
+metadata arguments, as :ref:`howto-models-metadata` lists, and the view's own comment
+becomes the model's ``description=``. See :ref:`howto-codegen`.
 
 .. _howto-backends-duckdb-setup:
 

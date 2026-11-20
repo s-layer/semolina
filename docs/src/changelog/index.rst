@@ -32,10 +32,17 @@ drops. The ``async`` extra's floor moves to 1.8.1 with the base one.
 ``semantic_views`` extension refuses a ``semantic_view()`` call that lists both facts and
 dimensions, so such a query failed with a ``Binder Error``. Semolina now lists the facts
 under ``dimensions``, which groups on them and returns the same rows as Snowflake and
-Databricks. A query that selects only facts is unchanged. **This query now needs
-``semantic_views`` 0.18.0 or later.** An earlier release doesn't take a fact under
-``dimensions`` and answers "unknown dimension", and ``INSTALL`` doesn't update a cached
-extension, so if yours is older, run ``UPDATE EXTENSIONS (semantic_views)``. See :ref:`explanation-duckdb-vs-warehouse`, and
+Databricks. A query that selects only facts is unchanged.
+
+**Facts with metrics on DuckDB.** A DuckDB query can now select a fact beside a metric, or
+filter a fact query on a metric. Semolina used to refuse it with ``ValueError``. It now lists
+the fact under ``dimensions``, and the metric is computed per fact value, as on Snowflake and
+Databricks. ``semolina codegen --check`` probes a DuckDB view with one query instead of two.
+
+**DuckDB queries with a fact beside a dimension or a metric need ``semantic_views`` 0.18.0
+or later.** An earlier release doesn't take a fact under ``dimensions`` and answers "unknown
+dimension". ``INSTALL`` doesn't update a cached extension, so if yours is older, run
+``UPDATE EXTENSIONS (semantic_views)``. See :ref:`explanation-duckdb-vs-warehouse` and
 :ref:`Check the extension's release <howto-backends-duckdb-extension-version>`.
 
 0.9.1 (2026-10-27)

@@ -595,9 +595,9 @@ it can only ever agree with itself. That's why a probe that failed makes the run
 but carried no column for one field doesn't change the exit code on its own; the note
 names the fields that fell back, so you can see which rows to distrust.
 
-A view that needs more than one query gets a route per query, not one for the run:
-Semolina doesn't send facts and metrics to DuckDB in a single ``semantic_view()`` call,
-and a driver is free to answer one query and refuse the other.
+The probe is one query that selects every field in the view, the facts with the metrics.
+On DuckDB that query needs version 0.18.0 or later of the ``semantic_views`` extension, as
+any query selecting a fact beside a metric does.
 
 Read the Detail lines
 ~~~~~~~~~~~~~~~~~~~~~

@@ -70,9 +70,10 @@ dimension, so this query needs 0.18.0 or later: on an older cached extension it 
 "unknown dimension" until you update it (see
 :ref:`Check the extension's release <howto-backends-duckdb-extension-version>`).
 
-What still differs is what Semolina sends to DuckDB: it doesn't combine facts and metrics in
-one ``semantic_view()`` call, and refuses that query with ``ValueError`` on DuckDB, while it
-sends it to Snowflake and Databricks as written.
+A query that selects a fact beside a metric takes the same route. The extension refuses a
+call that lists ``facts`` beside ``metrics``, so Semolina lists the fact under
+``dimensions``, and the metric is computed per fact value, as ``GROUP BY ALL`` computes it on
+Snowflake and Databricks. This also needs 0.18.0 or later.
 
 Decimals are not a DuckDB difference
 ------------------------------------
@@ -119,10 +120,9 @@ replays contain only successful queries, so there is no observation of what eith
 raises for any of those four failures, and guessing from the DuckDB result would be
 guessing twice: once about the driver, once about the warehouse behind it.
 
-Error classification is per-driver knowledge you acquire by
-watching your own driver, and that a handler written against DuckDB's classification is
-a handler written against one measurement. The "Catch the exception the driver actually
-raised" section of :ref:`howto-web-api` has the measured table;
+So which exception a failed query raises is something you learn by watching your own
+driver fail. A handler written against DuckDB's classification rests on one measurement,
+of one driver. The "Catch the exception the driver actually raised" section of :ref:`howto-web-api` has the measured table;
 :ref:`tutorial-dashboard-api` has the shape of a handler that does not depend on it.
 
 What Semolina smooths over, and what it leaves alone

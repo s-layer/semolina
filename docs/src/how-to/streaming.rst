@@ -159,21 +159,35 @@ Reach for ``fetch_df()`` and ``fetch_polars()`` when the dataframe is the goal. 
 Fetch a whole result in async code
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-:py:meth:`~semolina.acursor.AsyncSemolinaCursor.fetch_arrow_table` is awaited, and
-materializes the whole result off the event loop:
+The async cursor has the same three whole-result methods, each awaited.
+:py:meth:`~semolina.acursor.AsyncSemolinaCursor.fetch_arrow_table`,
+:py:meth:`~semolina.acursor.AsyncSemolinaCursor.fetch_df` and
+:py:meth:`~semolina.acursor.AsyncSemolinaCursor.fetch_polars` read the whole result on a
+worker thread, so the event loop keeps serving other requests while they run:
 
 .. code-block:: python
 
-   async with await (
+   query = (
        Sales.query()
        .metrics(Sales.revenue)
        .dimensions(Sales.country)
-       .aexecute()
-   ) as cursor:
-       table = await cursor.fetch_arrow_table()
-       df = table.to_pandas()
+   )
 
-One detail is specific to async: awaiting ``fetch_arrow_table()`` creates no live Arrow
+   async with await query.aexecute() as cursor:
+       table = await cursor.fetch_arrow_table()
+
+   async with await query.aexecute() as cursor:
+       df = await cursor.fetch_df()  # pandas
+
+   async with await query.aexecute() as cursor:
+       df = await cursor.fetch_polars()  # polars
+
+They need the same packages and return the same types as the sync methods above:
+``fetch_df()`` needs pyarrow and pandas, ``fetch_polars()`` needs only polars, and
+``fetch_polars()`` still has to be the first read on the cursor. Each one reads the whole
+result, so use one per cursor.
+
+One detail is specific to async: awaiting a whole-result method creates no live Arrow
 reader, so it places no constraint on close ordering, while a streaming cursor holds a reader
 that must be closed before its connection. ``async with`` handles that ordering for you
 either way.

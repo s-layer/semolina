@@ -224,13 +224,11 @@ On Snowflake and Databricks, ``Fact`` and ``Dimension`` produce identical SQL
 (``SELECT "COL" AS "col" FROM ... GROUP BY ALL``), so the distinction is semantic rather
 than a difference in execution. DuckDB's ``semantic_view()`` takes facts in their own
 ``facts :=`` argument and returns them row by row, so Semolina adds ``SELECT DISTINCT`` to
-a query that selects only facts. A fact selected beside a dimension goes in
-``dimensions :=`` instead, which groups on it. That needs version 0.18.0 or later of the
-``semantic_views`` extension; an earlier one answers "unknown dimension". You get the same
-rows on all three backends: one per distinct combination of values. Semolina doesn't send facts and metrics together on
-DuckDB, and raises ``ValueError`` if you pass a ``Fact`` to ``.dimensions()`` alongside
-``.metrics()`` on a DuckDB engine. :ref:`explanation-duckdb-vs-warehouse` has the
-details.
+a query that selects only facts. A fact selected beside a dimension or a metric goes in
+``dimensions :=`` instead, which groups on it, so a metric is computed per fact value. That
+needs version 0.18.0 or later of the ``semantic_views`` extension; an earlier one answers
+"unknown dimension". You get the same rows on all three backends: one per distinct
+combination of values. :ref:`explanation-duckdb-vs-warehouse` has the details.
 
 Default to ``Dimension``. Use ``Fact`` as an intentional opt-in for two situations:
 
