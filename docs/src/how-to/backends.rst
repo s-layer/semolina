@@ -680,10 +680,9 @@ is a no-op once the extension is cached locally.
 
 ``INSTALL`` doesn't update a cached extension either, so a machine that installed it a
 while ago may hold an older release than a fresh CI runner. Some of what Semolina does
-depends on the release: codegen reads ``S_LAYER_*`` tags from 0.17.0, and a fact selected
-beside a dimension is sent differently from 0.18.0 (Semolina reads the release from each
-connection and writes the query to suit). To see which release a connection loaded, and to
-update it:
+depends on the release: codegen reads ``S_LAYER_*`` tags from 0.17.0, and a query that
+selects a fact beside a dimension needs 0.18.0 (an older release answers it with "unknown
+dimension"). To see which release a connection loaded, and to update it:
 
 .. code-block:: sql
 

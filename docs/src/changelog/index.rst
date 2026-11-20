@@ -30,13 +30,13 @@ drops. The ``async`` extra's floor moves to 1.8.1 with the base one.
 
 **Fixed: DuckDB queries that select facts and dimensions.** Version 0.18.0 of the
 ``semantic_views`` extension refuses a ``semantic_view()`` call that lists both facts and
-dimensions, so such a query failed with a ``Binder Error``. On 0.18.0 or later Semolina now
-lists the facts under ``dimensions``, which groups on them and returns the same rows as
-Snowflake and Databricks. An earlier release doesn't take a fact there, so the engine reads
-the release from each connection it opens and keeps the old form on those. A query that
-selects only facts is unchanged. See :ref:`explanation-duckdb-vs-warehouse`, and
-:ref:`Check the extension's release <howto-backends-duckdb-extension-version>` to see or
-update yours.
+dimensions, so such a query failed with a ``Binder Error``. Semolina now lists the facts
+under ``dimensions``, which groups on them and returns the same rows as Snowflake and
+Databricks. A query that selects only facts is unchanged. **This query now needs
+``semantic_views`` 0.18.0 or later.** An earlier release doesn't take a fact under
+``dimensions`` and answers "unknown dimension", and ``INSTALL`` doesn't update a cached
+extension, so if yours is older, run ``UPDATE EXTENSIONS (semantic_views)``. See :ref:`explanation-duckdb-vs-warehouse`, and
+:ref:`Check the extension's release <howto-backends-duckdb-extension-version>`.
 
 0.9.1 (2026-10-27)
 ------------------

@@ -60,15 +60,15 @@ DuckDB's ``semantic_view()`` returns facts one row per source row, so Semolina s
 ``SELECT DISTINCT`` for a DuckDB query that selects only facts, and the three backends
 return the same rows.
 
-A query that selects facts and dimensions together depends on the extension's release.
+A query that selects facts and dimensions together reaches the same rows by another route.
 From version 0.18.0 the ``semantic_views`` extension refuses a ``semantic_view()`` call that
 lists ``facts`` beside ``dimensions``, as Snowflake's own ``SEMANTIC_VIEW()`` clause does,
 and takes a fact listed under ``dimensions``, which it groups on. So Semolina lists the facts
-under ``dimensions`` there. An earlier release does the opposite: it knows a ``dimensions``
-name only as a dimension, and takes the two lists together. There Semolina sends both lists
-and ``SELECT DISTINCT``. Semolina reads the release from each connection the engine opens,
-so either way you get the one row per distinct combination that ``GROUP BY ALL`` gives on
-Snowflake and Databricks.
+under ``dimensions``, which gives the one row per distinct combination that ``GROUP BY ALL``
+gives on Snowflake and Databricks. An earlier release knows a ``dimensions`` name only as a
+dimension, so this query needs 0.18.0 or later: on an older cached extension it fails with
+"unknown dimension" until you update it (see
+:ref:`Check the extension's release <howto-backends-duckdb-extension-version>`).
 
 What still differs is what Semolina sends to DuckDB: it doesn't combine facts and metrics in
 one ``semantic_view()`` call, and refuses that query with ``ValueError`` on DuckDB, while it
