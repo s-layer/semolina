@@ -1164,6 +1164,40 @@ class TestFetchPolars:
         assert "region" in frame.columns
         assert set(frame.get_column("region")) == {"US", "MX", "CA"}
 
+    def test_returns_a_frame_with_one_column_per_result_column_on_polars_2(
+        self, probe_engine: Engine
+    ) -> None:
+        """
+        Under polars 2, fetch_polars() returns a frame of the result's columns, not a struct.
+
+        polars 2 made ``polars.from_arrow`` on an Arrow stream return a one-column struct
+        ``Series``, and adbc-driver-manager before 1.13 returned that ``Series`` as it was
+        (apache/arrow-adbc#4915). This cursor delegates straight to the driver, so on
+        adbc-driver-manager 1.12 or older it handed back ``Series 'duckdb_query_result'
+        [struct[2]]``. The ``adbc-poolhouse>=1.8.1`` floor brings adbc-driver-manager 1.13,
+        which returns the frame.
+
+        Needs polars 2 itself, not any polars. The lock resolves polars 2, so if it ever
+        slips back to polars 1 this test skips, and a skip fails CI (``tests/ci_skips.py``),
+        rather than passing on a polars that cannot show the bug. The rows are compared in
+        full, with the metric's ``Decimal`` dtype, so a frame built from the struct's fields
+        under other names or types would fail too.
+        """
+        polars = pytest.importorskip("polars", minversion="2.0.0")
+        from decimal import Decimal
+
+        with _probe_cursor(probe_engine) as cursor:
+            frame = cursor.fetch_polars()
+
+        assert isinstance(frame, polars.DataFrame), type(frame)
+        assert sorted(frame.columns) == ["region", "total_order_value"]
+        assert frame.schema["total_order_value"] == polars.Decimal(precision=38, scale=2)
+        assert frame.sort("region").select("region", "total_order_value").rows() == [
+            ("CA", None),
+            ("MX", Decimal("100.00")),
+            ("US", Decimal("43.25")),
+        ]
+
     def test_after_fetch_record_batch_raises_a_semolina_error_naming_both(
         self, probe_engine: Engine
     ) -> None:
